@@ -15,7 +15,7 @@ export default function Navigation() {
     { href: '/dashboard', label: 'Dashboard' },
     { href: '/chat', label: 'AI Chatbot' },
     { href: '/analysis', label: 'Analysis' },
-    { href: '/prompts', label: 'Prompts' },
+    { href: '/signals', label: 'Signals' },
   ];
 
   const handleSignOut = async () => {

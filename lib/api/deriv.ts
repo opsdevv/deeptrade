@@ -560,6 +560,104 @@ export interface DerivInstrument {
   submarket?: string;
 }
 
+export interface CurrentPrice {
+  symbol: string;
+  price: number;
+  bid?: number;
+  ask?: number;
+  timestamp: number;
+}
+
+/**
+ * Get current/live price for a symbol from Deriv API
+ */
+export async function getCurrentPrice(symbol: string): Promise<CurrentPrice | null> {
+  if (!DERIV_API_KEY) {
+    console.warn('[WARN] DERIV_API_KEY not configured, cannot fetch current price');
+    return null;
+  }
+
+  const normalizedSymbol = normalizeSymbol(symbol);
+  let symbolToUse = normalizedSymbol;
+
+  try {
+    // First, try to use ticks endpoint to get the latest tick/price
+    try {
+      const response = await sendRequest({
+        ticks: symbolToUse,
+        subscribe: 0, // Don't subscribe, just get current tick
+      }, 5000);
+
+      if (!response.error) {
+        const tick = response.tick || response.ticks?.[0] || response.quotes?.[0];
+        if (tick) {
+          const price = parseFloat(tick.quote || tick.price || tick.close || 0);
+          if (price > 0) {
+            return {
+              symbol: symbolToUse,
+              price,
+              bid: tick.bid ? parseFloat(tick.bid) : undefined,
+              ask: tick.ask ? parseFloat(tick.ask) : undefined,
+              timestamp: tick.epoch || tick.time || Date.now() / 1000,
+            };
+          }
+        }
+      } else {
+        // If ticks fails, try to find correct symbol
+        const correctSymbol = await findCorrectSymbol(symbolToUse);
+        if (correctSymbol && correctSymbol !== symbolToUse) {
+          symbolToUse = correctSymbol;
+          const retryResponse = await sendRequest({
+            ticks: symbolToUse,
+            subscribe: 0,
+          }, 5000);
+          
+          if (!retryResponse.error) {
+            const tick = retryResponse.tick || retryResponse.ticks?.[0] || retryResponse.quotes?.[0];
+            if (tick) {
+              const price = parseFloat(tick.quote || tick.price || tick.close || 0);
+              if (price > 0) {
+                return {
+                  symbol: symbolToUse,
+                  price,
+                  bid: tick.bid ? parseFloat(tick.bid) : undefined,
+                  ask: tick.ask ? parseFloat(tick.ask) : undefined,
+                  timestamp: tick.epoch || tick.time || Date.now() / 1000,
+                };
+              }
+            }
+          }
+        }
+      }
+    } catch (ticksError) {
+      // Ticks endpoint failed, will try candle fallback
+      console.log(`[INFO] Ticks endpoint failed for ${symbolToUse}, trying candle fallback`);
+    }
+
+    // Fallback: get latest candle and use its close price
+    try {
+      const candleData = await fetchMarketData(symbolToUse, '5m', 1);
+      if (candleData && candleData.length > 0) {
+        const latestCandle = candleData[candleData.length - 1];
+        if (latestCandle.close > 0) {
+          return {
+            symbol: symbolToUse,
+            price: latestCandle.close,
+            timestamp: latestCandle.time,
+          };
+        }
+      }
+    } catch (candleError: any) {
+      console.error(`[ERROR] Candle fallback also failed for ${symbolToUse}:`, candleError.message);
+    }
+
+    return null;
+  } catch (error: any) {
+    console.error(`[ERROR] Error getting current price for ${symbolToUse}:`, error.message);
+    return null;
+  }
+}
+
 /**
  * Map Deriv market/submarket to category
  */

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { formatTimeOnlyWithTimezone } from '@/lib/utils/price-format';
+import { TextWithClickableNumbers } from '@/components/ui/ClickableNumber';
 
 interface DerivInstrument {
   symbol: string;
@@ -19,11 +20,20 @@ interface Message {
   created_at: string;
 }
 
+interface ChatSession {
+  session_id: string;
+  symbol: string | null;
+  created_at: string;
+  preview: string;
+  message_count: number;
+}
+
 export default function TradingChatbot() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [sessionId] = useState(() => {
+  const [uploading, setUploading] = useState(false);
+  const [sessionId, setSessionId] = useState(() => {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) {
       return crypto.randomUUID();
     }
@@ -39,13 +49,21 @@ export default function TradingChatbot() {
   const [loadingInstruments, setLoadingInstruments] = useState(true);
   const [screenshotFile, setScreenshotFile] = useState<File | null>(null);
   const [screenshotPreview, setScreenshotPreview] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [loadingSessions, setLoadingSessions] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetchInstruments();
     loadChatHistory();
+    fetchSessions();
   }, []);
+
+  useEffect(() => {
+    loadChatHistory();
+  }, [sessionId]);
 
   useEffect(() => {
     scrollToBottom();
@@ -79,13 +97,97 @@ export default function TradingChatbot() {
       const data = await response.json();
       if (data.success && data.messages) {
         setMessages(data.messages);
+      } else {
+        setMessages([]);
       }
     } catch (error) {
       console.error('Error loading chat history:', error);
+      setMessages([]);
     }
   };
 
+  const fetchSessions = async () => {
+    try {
+      setLoadingSessions(true);
+      const response = await fetch('/api/chat/sessions');
+      const data = await response.json();
+      if (data.success && data.sessions) {
+        setSessions(data.sessions);
+      }
+    } catch (error) {
+      console.error('Error fetching sessions:', error);
+    } finally {
+      setLoadingSessions(false);
+    }
+  };
+
+  const switchSession = (newSessionId: string) => {
+    setSessionId(newSessionId);
+    setMessages([]);
+    setInput('');
+    setScreenshotFile(null);
+    setScreenshotPreview(null);
+  };
+
+  const createNewSession = () => {
+    const newSessionId = typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+          const r = Math.random() * 16 | 0;
+          const v = c === 'x' ? r : (r & 0x3 | 0x8);
+          return v.toString(16);
+        });
+    switchSession(newSessionId);
+    // Refresh sessions list after a short delay to allow for new messages
+    setTimeout(() => fetchSessions(), 1000);
+  };
+
+  const deleteSession = async (sessionIdToDelete: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm('Are you sure you want to delete this chat session?')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/chat/sessions?session_id=${sessionIdToDelete}`, {
+        method: 'DELETE',
+      });
+      const data = await response.json();
+      if (data.success) {
+        // If we deleted the current session, create a new one
+        if (sessionIdToDelete === sessionId) {
+          createNewSession();
+        }
+        // Refresh sessions list
+        fetchSessions();
+      } else {
+        alert('Failed to delete session: ' + (data.error || 'Unknown error'));
+      }
+    } catch (error: any) {
+      console.error('Error deleting session:', error);
+      alert('Error deleting session: ' + error.message);
+    }
+  };
+
+  const formatSessionDate = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString();
+  };
+
   const uploadScreenshot = async (file: File): Promise<string | null> => {
+    if (!file) return null;
+
+    setUploading(true);
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -99,11 +201,15 @@ export default function TradingChatbot() {
       const data = await response.json();
       if (data.success && data.url) {
         return data.url;
+      } else {
+        throw new Error(data.error || 'Failed to upload screenshot');
       }
-      return null;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error uploading screenshot:', error);
+      alert('Failed to upload screenshot: ' + error.message);
       return null;
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -138,9 +244,16 @@ export default function TradingChatbot() {
                          userMessage.toLowerCase().includes('analysis') ||
                          userMessage.toLowerCase().includes('run analysis');
 
+      const requestPayload = {
+        session_id: sessionId,
+        message: userMessage,
+        screenshot_url: screenshotUrl,
+        symbol: selectedSymbol,
+        run_analysis: runAnalysis && selectedSymbol,
+      };
       // #region agent log
       try {
-        const logData = {location:'TradingChatbot.tsx:142',message:'Before API call',data:{sessionIdValue:sessionId,hasMessage:!!userMessage,hasScreenshot:!!screenshotUrl,symbol:selectedSymbol,runAnalysis:runAnalysis&&selectedSymbol},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H3,H5'};
+        const logData = {location:'TradingChatbot.tsx:158',message:'Before API call',data:{sessionIdValue:sessionId,sessionIdType:typeof sessionId,sessionIdLength:sessionId?.length,hasMessage:!!userMessage,messageLength:userMessage?.length,hasScreenshot:!!screenshotUrl,symbol:selectedSymbol,runAnalysis:runAnalysis&&selectedSymbol,requestPayload},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1,H2,H3,H4,H5'};
         fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(logData)}).catch(()=>{});
       } catch (logErr) {
         // Ignore logging errors
@@ -151,18 +264,11 @@ export default function TradingChatbot() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          session_id: sessionId,
-          message: userMessage,
-          screenshot_url: screenshotUrl,
-          symbol: selectedSymbol,
-          run_analysis: runAnalysis && selectedSymbol,
-        }),
+        body: JSON.stringify(requestPayload),
       });
-
       // #region agent log
       try {
-        const logData = {location:'TradingChatbot.tsx:155',message:'After fetch, before parsing',data:{status:response.status,statusText:response.statusText,ok:response.ok},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H3,H5'};
+        const logData = {location:'TradingChatbot.tsx:175',message:'After fetch, before parsing',data:{status:response.status,statusText:response.statusText,ok:response.ok,hasBody:!!response.body},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1,H2,H3,H4,H5'};
         fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(logData)}).catch(()=>{});
       } catch (logErr) {
         // Ignore logging errors
@@ -171,7 +277,7 @@ export default function TradingChatbot() {
       const data = await response.json();
       // #region agent log
       try {
-        const logData = {location:'TradingChatbot.tsx:156',message:'Response parsed',data:{hasSuccess:data.hasOwnProperty('success'),success:data.success,hasMessages:data.hasOwnProperty('messages'),messagesLength:data.messages?.length,hasError:data.hasOwnProperty('error'),error:data.error,fullData:data},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H3'};
+        const logData = {location:'TradingChatbot.tsx:189',message:'Response parsed',data:{hasSuccess:data.hasOwnProperty('success'),success:data.success,hasMessages:data.hasOwnProperty('messages'),messagesLength:data.messages?.length,hasError:data.hasOwnProperty('error'),error:data.error,fullData:data},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1,H2,H3,H4,H5'};
         fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(logData)}).catch(()=>{});
       } catch (logErr) {
         // Ignore logging errors
@@ -188,6 +294,9 @@ export default function TradingChatbot() {
         if (data.analysis) {
           console.log('Analysis completed:', data.analysis);
         }
+
+        // Refresh sessions list after sending a message
+        fetchSessions();
       } else {
         // #region agent log
         try {
@@ -201,15 +310,9 @@ export default function TradingChatbot() {
       }
     } catch (error: any) {
       console.error('Error sending message:', error);
-      // Remove temp message and show error
+      alert('Error sending message: ' + error.message);
+      // Remove temp message on error
       setMessages((prev) => prev.filter((m) => !m.id.startsWith('temp')));
-      const errorMessage: Message = {
-        id: `error-${Date.now()}`,
-        role: 'assistant',
-        content: `Error: ${error.message}. Please try again.`,
-        created_at: new Date().toISOString(),
-      };
-      setMessages((prev) => [...prev, errorMessage]);
     } finally {
       setLoading(false);
     }
@@ -217,15 +320,27 @@ export default function TradingChatbot() {
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file && file.type.startsWith('image/')) {
+    if (file) {
+      // Validate image file
+      if (!file.type.startsWith('image/')) {
+        alert('Please select an image file');
+        return;
+      }
+
+      // Check file size (max 10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        alert('Image size must be less than 10MB');
+        return;
+      }
+
       setScreenshotFile(file);
+      
+      // Create preview
       const reader = new FileReader();
       reader.onloadend = () => {
         setScreenshotPreview(reader.result as string);
       };
       reader.readAsDataURL(file);
-    } else {
-      alert('Please select an image file');
     }
   };
 
@@ -237,6 +352,44 @@ export default function TradingChatbot() {
     }
   };
 
+  const handlePaste = async (e: React.ClipboardEvent) => {
+    const items = e.clipboardData.items;
+    
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      
+      // Check if the pasted item is an image
+      if (item.type.indexOf('image') !== -1) {
+        e.preventDefault();
+        
+        const file = item.getAsFile();
+        if (!file) return;
+
+        // Validate image file
+        if (!file.type.startsWith('image/')) {
+          alert('Please paste a valid image file');
+          return;
+        }
+
+        // Check file size (max 10MB)
+        if (file.size > 10 * 1024 * 1024) {
+          alert('Image size must be less than 10MB');
+          return;
+        }
+
+        setScreenshotFile(file);
+        
+        // Create preview
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setScreenshotPreview(reader.result as string);
+        };
+        reader.readAsDataURL(file);
+        break; // Only handle the first image
+      }
+    }
+  };
+
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -245,31 +398,119 @@ export default function TradingChatbot() {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)] bg-gray-900">
-      {/* Header with Symbol Selection */}
-      <div className="bg-gray-800 border-b border-gray-700 p-4">
-        <div className="max-w-4xl mx-auto flex items-center gap-4">
-          <label className="text-sm font-medium text-gray-300">
-            Symbol:
-          </label>
-          <select
-            value={selectedSymbol}
-            onChange={(e) => setSelectedSymbol(e.target.value)}
-            disabled={loadingInstruments}
-            className="flex-1 bg-gray-700 text-white border border-gray-600 rounded px-4 py-2 disabled:opacity-50"
+    <div className="flex h-[calc(100vh-4rem)] bg-gray-900">
+      {/* Sidebar */}
+      {sidebarOpen && (
+        <div className="w-64 transition-all duration-300 bg-gray-800 border-r border-gray-700 flex flex-col overflow-hidden">
+        <div className="p-4 border-b border-gray-700">
+          <button
+            onClick={createNewSession}
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium px-4 py-2 rounded-lg transition flex items-center gap-2"
           >
-            {loadingInstruments ? (
-              <option>Loading symbols...</option>
-            ) : (
-              instruments.map((inst) => (
-                <option key={inst.symbol} value={inst.symbol}>
-                  {inst.display_name} ({inst.symbol})
-                </option>
-              ))
-            )}
-          </select>
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            New Chat
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {loadingSessions ? (
+            <div className="p-4 text-center text-gray-400">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-white mx-auto"></div>
+              <p className="mt-2 text-sm">Loading history...</p>
+            </div>
+          ) : sessions.length === 0 ? (
+            <div className="p-4 text-center text-gray-400 text-sm">
+              No chat history yet
+            </div>
+          ) : (
+            <div className="p-2">
+              {sessions.map((session) => (
+                <div
+                  key={session.session_id}
+                  onClick={() => switchSession(session.session_id)}
+                  className={`group relative p-3 rounded-lg mb-2 cursor-pointer transition ${
+                    session.session_id === sessionId
+                      ? 'bg-gray-700'
+                      : 'bg-gray-800 hover:bg-gray-700'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        {session.symbol && (
+                          <span className="text-xs font-medium text-blue-400">
+                            {session.symbol}
+                          </span>
+                        )}
+                        <span className="text-xs text-gray-400">
+                          {formatSessionDate(session.created_at)}
+                        </span>
+                      </div>
+                      <p className="text-sm text-gray-300 truncate">
+                        {session.preview || 'New chat'}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {session.message_count} message{session.message_count !== 1 ? 's' : ''}
+                      </p>
+                    </div>
+                    <button
+                      onClick={(e) => deleteSession(session.session_id, e)}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-red-400 p-1"
+                      title="Delete session"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
+      )}
+
+      {/* Main Chat Area */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Header with Symbol Selection and Sidebar Toggle */}
+        <div className="bg-gray-800 border-b border-gray-700 p-4">
+          <div className="max-w-4xl mx-auto flex items-center gap-4">
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="text-gray-400 hover:text-white transition"
+              title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                {sidebarOpen ? (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                ) : (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                )}
+              </svg>
+            </button>
+            <label className="text-sm font-medium text-gray-300">
+              Symbol:
+            </label>
+            <select
+              value={selectedSymbol}
+              onChange={(e) => setSelectedSymbol(e.target.value)}
+              disabled={loadingInstruments}
+              className="flex-1 bg-gray-700 text-white border border-gray-600 rounded px-4 py-2 disabled:opacity-50"
+            >
+              {loadingInstruments ? (
+                <option>Loading symbols...</option>
+              ) : (
+                instruments.map((inst) => (
+                  <option key={inst.symbol} value={inst.symbol}>
+                    {inst.display_name} ({inst.symbol})
+                  </option>
+                ))
+              )}
+            </select>
+          </div>
+        </div>
 
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto p-4">
@@ -278,7 +519,7 @@ export default function TradingChatbot() {
             <div className="text-center text-gray-400 mt-8">
               <p className="text-lg mb-2">Welcome to the Trading AI Chatbot!</p>
               <p className="text-sm">
-                Ask me about any symbol, request analysis, or upload screenshots for analysis.
+                Ask me about any symbol, request analysis, or paste/upload screenshots for analysis.
               </p>
               <p className="text-sm mt-2">
                 Try: &quot;Analyze {selectedSymbol}&quot; or &quot;What&apos;s the current bias for {selectedSymbol}?&quot;
@@ -307,7 +548,9 @@ export default function TradingChatbot() {
                     />
                   </div>
                 )}
-                <div className="whitespace-pre-wrap">{message.content}</div>
+                <div className="whitespace-pre-wrap break-words">
+                  <TextWithClickableNumbers text={message.content} />
+                </div>
                 <div className="text-xs mt-2 opacity-70">
                   {formatTimeOnlyWithTimezone(message.created_at)}
                 </div>
@@ -317,11 +560,10 @@ export default function TradingChatbot() {
 
           {loading && (
             <div className="flex justify-start">
-              <div className="bg-gray-800 text-gray-100 rounded-lg p-4">
+              <div className="bg-gray-700 rounded-lg p-4">
                 <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                  <span className="text-gray-300">DeepSeek is thinking...</span>
                 </div>
               </div>
             </div>
@@ -336,7 +578,7 @@ export default function TradingChatbot() {
         <div className="max-w-4xl mx-auto">
           {/* Screenshot Preview */}
           {screenshotPreview && (
-            <div className="mb-2 relative inline-block">
+            <div className="mb-3 relative inline-block">
               <img
                 src={screenshotPreview}
                 alt="Preview"
@@ -344,7 +586,7 @@ export default function TradingChatbot() {
               />
               <button
                 onClick={removeScreenshot}
-                className="absolute top-0 right-0 bg-red-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs hover:bg-red-700"
+                className="absolute top-1 right-1 bg-red-600 hover:bg-red-700 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs"
               >
                 ×
               </button>
@@ -361,28 +603,44 @@ export default function TradingChatbot() {
             />
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition"
+              disabled={uploading || loading}
+              className="bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg transition flex items-center gap-2"
               title="Upload screenshot"
             >
-              📷
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                />
+              </svg>
             </button>
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyPress={handleKeyPress}
-              placeholder="Ask about any symbol, request analysis, or discuss trading strategies..."
-              className="flex-1 bg-gray-700 text-white border border-gray-600 rounded-lg px-4 py-2 resize-none focus:outline-none focus:border-blue-500"
+              onPaste={handlePaste}
+              placeholder="Ask about any symbol, request analysis, or paste/upload screenshots..."
+              disabled={loading || uploading}
+              className="flex-1 bg-gray-700 text-white border border-gray-600 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed resize-none"
               rows={2}
             />
             <button
               onClick={handleSend}
-              disabled={loading || (!input.trim() && !screenshotFile)}
-              className="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition"
+              disabled={loading || uploading || (!input.trim() && !screenshotFile)}
+              className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold px-6 py-2 rounded-lg transition"
             >
-              Send
+              {loading ? 'Sending...' : 'Send'}
             </button>
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { formatTimeOnlyWithTimezone } from '@/lib/utils/price-format';
+import { TextWithClickableNumbers } from '@/components/ui/ClickableNumber';
 
 interface ChatMessage {
   id: string;
@@ -220,7 +221,9 @@ export default function DeepSeekChat({ runId, analysisData }: DeepSeekChatProps)
                     />
                   </div>
                 )}
-                <div className="whitespace-pre-wrap break-words">{message.content}</div>
+                <div className="whitespace-pre-wrap break-words">
+                  <TextWithClickableNumbers text={message.content} />
+                </div>
                 <div className="text-xs mt-2 opacity-70">
                   {formatTimeOnlyWithTimezone(message.created_at)}
                 </div>

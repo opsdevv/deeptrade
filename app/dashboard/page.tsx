@@ -523,10 +523,10 @@ export default function Dashboard() {
 
         <div className="mt-6 sm:mt-8 flex flex-col sm:flex-row gap-4">
           <Link
-            href="/prompts"
+            href="/signals"
             className="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-6 rounded-lg transition text-center w-full sm:w-auto"
           >
-            DeepSeek Prompts
+            View Signals
           </Link>
         </div>
       </div>

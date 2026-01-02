@@ -9,6 +9,7 @@ import ClickablePrice from '@/components/ui/ClickablePrice';
 import { AnalysisResult, TimeframeData, ChartDrawingData } from '@/types/analysis';
 import { formatPrice, formatPriceRange, formatPriceArray } from '@/lib/utils/price-format';
 import { detectSupportResistance, SupportResistanceLevel } from '@/lib/ict/support-resistance';
+import { useAuth } from '@/lib/auth/context';
 
 // JSON Viewer Component
 function JSONViewer({ data }: { data: any }) {
@@ -163,6 +164,7 @@ function JSONViewer({ data }: { data: any }) {
 export default function AnalysisPage() {
   const searchParams = useSearchParams();
   const runId = searchParams.get('run_id');
+  const { user } = useAuth();
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [chartData, setChartData] = useState<Record<string, TimeframeData[]>>({});
@@ -170,12 +172,74 @@ export default function AnalysisPage() {
   const [supportResistance, setSupportResistance] = useState<Record<string, SupportResistanceLevel[]>>({});
   const [refreshing, setRefreshing] = useState(false);
   const [activeTimeframe, setActiveTimeframe] = useState<'2h' | '15m' | '5m'>('2h');
+  const [addingToWatchlist, setAddingToWatchlist] = useState(false);
+  const [watchlistStatus, setWatchlistStatus] = useState<'idle' | 'added' | 'updated'>('idle');
+
+  // Disable scroll restoration on mount
+  useEffect(() => {
+    if ('scrollRestoration' in window.history) {
+      window.history.scrollRestoration = 'manual';
+    }
+  }, []);
 
   useEffect(() => {
     if (runId) {
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/analysis/page.tsx:175',message:'runId changed, scrolling to top and fetching analysis',data:{runId,scrollY:window.scrollY},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      // Scroll to top when navigating to a new analysis
+      window.scrollTo(0, 0);
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/analysis/page.tsx:179',message:'After scrollTo, scroll position',data:{scrollY:window.scrollY},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
       fetchAnalysis(runId);
     }
   }, [runId]);
+
+  // Scroll to top when analysis finishes loading
+  useEffect(() => {
+    if (!loading && analysis) {
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/analysis/page.tsx:187',message:'Analysis loaded, preparing to scroll to top',data:{loading,hasAnalysis:!!analysis,scrollY:window.scrollY},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
+      // Use requestAnimationFrame to ensure scroll happens after render
+      requestAnimationFrame(() => {
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/analysis/page.tsx:192',message:'In requestAnimationFrame, before scrollTo',data:{scrollY:window.scrollY},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
+        window.scrollTo(0, 0);
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/analysis/page.tsx:196',message:'After scrollTo in RAF',data:{scrollY:window.scrollY},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
+      });
+    }
+  }, [loading, analysis]);
+
+  // Also scroll to top when chartData finishes loading (content might change height)
+  useEffect(() => {
+    if (Object.keys(chartData).length > 0 && !loading && analysis) {
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/analysis/page.tsx:207',message:'ChartData loaded, scrolling to top',data:{scrollY:window.scrollY,chartDataKeys:Object.keys(chartData)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+      // #endregion
+      requestAnimationFrame(() => {
+        window.scrollTo(0, 0);
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/analysis/page.tsx:211',message:'After scrollTo in chartData effect',data:{scrollY:window.scrollY},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+        // #endregion
+      });
+    }
+  }, [chartData, loading, analysis]);
+
+  // Track scroll events to see what's causing unwanted scrolling
+  useEffect(() => {
+    const handleScroll = () => {
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/analysis/page.tsx:205',message:'Scroll event detected',data:{scrollY:window.scrollY,scrollX:window.scrollX},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+      // #endregion
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
   const fetchAnalysis = async (id: string) => {
     setLoading(true);
@@ -225,8 +289,14 @@ export default function AnalysisPage() {
           if (dataResponse.ok) {
             const dataResult = await dataResponse.json();
             if (dataResult.success && dataResult.data) {
+              // #region agent log
+              fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/analysis/page.tsx:240',message:'Setting chartData, scroll position before',data:{scrollY:window.scrollY,hasData:!!dataResult.data},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+              // #endregion
               setChartData(dataResult.data);
               calculateSupportResistance(dataResult.data);
+              // #region agent log
+              fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/analysis/page.tsx:244',message:'After setting chartData, scroll position',data:{scrollY:window.scrollY},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+              // #endregion
             }
           }
         } catch (dataError) {
@@ -240,7 +310,13 @@ export default function AnalysisPage() {
       console.error('Error fetching analysis:', error);
       alert('Error loading analysis: ' + error.message);
     } finally {
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/analysis/page.tsx:257',message:'Setting loading to false',data:{scrollY:window.scrollY,hasAnalysis:!!analysis},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+      // #endregion
       setLoading(false);
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/analysis/page.tsx:260',message:'After setLoading false, scroll position',data:{scrollY:window.scrollY},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+      // #endregion
     }
   };
 
@@ -391,6 +467,42 @@ export default function AnalysisPage() {
     }
   };
 
+  const addToWatchlist = async () => {
+    if (!analysis || !user?.id) {
+      alert('Please log in to add instruments to your watchlist');
+      return;
+    }
+
+    setAddingToWatchlist(true);
+    try {
+      const response = await fetch('/api/signals', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          user_id: user.id,
+          instrument: analysis.instrument,
+          analysis_run_id: runId || null,
+          analysis_data: analysis,
+        }),
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        setWatchlistStatus(data.isNew ? 'added' : 'updated');
+        setTimeout(() => setWatchlistStatus('idle'), 3000);
+      } else {
+        alert('Failed to add to watchlist: ' + data.error);
+      }
+    } catch (error: any) {
+      console.error('Error adding to watchlist:', error);
+      alert('Error: ' + error.message);
+    } finally {
+      setAddingToWatchlist(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
@@ -422,6 +534,27 @@ export default function AnalysisPage() {
             >
               {refreshing ? 'Refreshing...' : 'Refresh Analysis'}
             </button>
+            {user && (
+              <button
+                onClick={addToWatchlist}
+                disabled={addingToWatchlist}
+                className={`font-semibold py-2 px-4 rounded-lg transition text-sm w-full sm:w-auto ${
+                  watchlistStatus === 'added'
+                    ? 'bg-green-600 hover:bg-green-700 text-white'
+                    : watchlistStatus === 'updated'
+                    ? 'bg-yellow-600 hover:bg-yellow-700 text-white'
+                    : 'bg-purple-600 hover:bg-purple-700 text-white disabled:bg-gray-600 disabled:cursor-not-allowed'
+                }`}
+              >
+                {addingToWatchlist
+                  ? 'Adding...'
+                  : watchlistStatus === 'added'
+                  ? '✓ Added to Watchlist'
+                  : watchlistStatus === 'updated'
+                  ? '✓ Updated in Watchlist'
+                  : 'Add to Watchlist'}
+              </button>
+            )}
             <Link
               href="/dashboard"
               className="bg-gray-700 hover:bg-gray-600 text-white font-semibold py-2 px-4 rounded-lg transition text-sm text-center w-full sm:w-auto"

@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/client';
 import { callDeepSeekAPI } from '@/lib/api/deepseek';
-import { getAvailableInstruments } from '@/lib/api/deriv';
+import { getAvailableInstruments, getCurrentPrice, fetchMarketData } from '@/lib/api/deriv';
 import { analyze } from '@/lib/analysis/engine';
-import { fetchMarketData } from '@/lib/api/deriv';
+import { detectSymbolFromText } from '@/lib/utils/symbol-detector';
 
 export async function GET(request: NextRequest) {
   try {
@@ -78,6 +78,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Detect symbol from message if not explicitly provided
+    let detectedSymbol = symbol;
+    let detectedSymbolInfo = null;
+    if ((message || screenshot_url) && !symbol) {
+      try {
+        const instruments = await getAvailableInstruments();
+        const detected = detectSymbolFromText(message || '', instruments);
+        if (detected) {
+          detectedSymbol = detected.symbol;
+          detectedSymbolInfo = detected;
+        }
+      } catch (error) {
+        console.error('Error detecting symbol from text:', error);
+        // Continue without symbol detection
+      }
+    }
+    
+    // Use detected symbol if available, otherwise use provided symbol
+    const symbolToUse = detectedSymbol || symbol;
+
     let supabase;
     try {
       // #region agent log
@@ -119,30 +139,38 @@ export async function POST(request: NextRequest) {
     };
 
     // Save user message
+    const insertPayload = {
+      session_id,
+      symbol: symbolToUse || null,
+      role: 'user',
+      content: message || (screenshot_url ? 'Please analyze this screenshot.' : ''),
+      screenshot_url: screenshot_url || null,
+    };
     // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'route.ts:95',message:'Before database insert',data:{sessionId,symbol:symbol||null,hasMessage:!!message,hasScreenshot:!!screenshot_url},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1,H4'})}).catch(()=>{});
+    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'route.ts:142',message:'Before database insert',data:{insertPayload,sessionIdType:typeof session_id,sessionIdValue:session_id,sessionIdLength:session_id?.length,hasContent:!!insertPayload.content,contentLength:insertPayload.content?.length,symbolToUse},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1,H2,H3,H4,H5'})}).catch(()=>{});
     // #endregion
     const { data: userMessage, error: userError } = await supabase
       .from('chat_messages')
-      .insert({
-        session_id,
-        symbol: symbol || null,
-        role: 'user',
-        content: message || (screenshot_url ? 'Please analyze this screenshot.' : ''),
-        screenshot_url: screenshot_url || null,
-      })
+      .insert(insertPayload)
       .select()
       .single();
 
     // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'route.ts:105',message:'After database insert',data:{hasUserMessage:!!userMessage,hasError:!!userError,errorCode:userError?.code,errorMessage:userError?.message,errorDetails:userError?.details,errorHint:userError?.hint},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1,H4'})}).catch(()=>{});
+    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'route.ts:156',message:'After database insert',data:{hasUserMessage:!!userMessage,hasError:!!userError,errorCode:userError?.code,errorMessage:userError?.message,errorDetails:userError?.details,errorHint:userError?.hint,fullError:JSON.stringify(userError)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1,H2,H3,H4,H5'})}).catch(()=>{});
     // #endregion
 
     if (userError) {
       console.error('Error saving user message:', userError);
-      const errorResponse = { error: 'Failed to save message', success: false };
+      // Provide more specific error message for schema issues
+      let errorMessage = 'Failed to save message';
+      if (userError.code === 'PGRST204' && userError.message?.includes('session_id')) {
+        errorMessage = 'Database schema error: session_id column missing. Please run migration 003_standalone_chat.sql';
+      } else if (userError.message) {
+        errorMessage = `Failed to save message: ${userError.message}`;
+      }
+      const errorResponse = { error: errorMessage, success: false };
       // #region agent log
-      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'route.ts:110',message:'Returning error response',data:{response:errorResponse,statusCode:500},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1,H3,H4'})}).catch(()=>{});
+      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'route.ts:163',message:'Returning error response',data:{response:errorResponse,statusCode:500,originalError:userError},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1,H3,H4'})}).catch(()=>{});
       // #endregion
       return NextResponse.json(
         errorResponse,
@@ -161,19 +189,83 @@ export async function POST(request: NextRequest) {
       console.error('Error fetching history:', historyError);
     }
 
-    // Run analysis if requested and symbol is provided
+    // ALWAYS fetch latest data from Deriv API before responding
+    // This ensures the assistant has access to live price data for any query
+    let currentPriceData = null;
+    let latestMarketData = null;
+    
+    if (symbolToUse) {
+      try {
+        // Fetch current price
+        currentPriceData = await getCurrentPrice(symbolToUse);
+        if (currentPriceData) {
+          console.log(`[INFO] Fetched current price for ${symbolToUse}: ${currentPriceData.price}`);
+        } else {
+          console.warn(`[WARN] Could not fetch current price for ${symbolToUse}`);
+        }
+        
+        // Fetch latest market data for context (just a few recent candles)
+        try {
+          const [data2h, data15m, data5m] = await Promise.all([
+            fetchMarketData(symbolToUse, '2h', 10).catch(() => null),
+            fetchMarketData(symbolToUse, '15m', 10).catch(() => null),
+            fetchMarketData(symbolToUse, '5m', 10).catch(() => null),
+          ]);
+          
+          if (data2h || data15m || data5m) {
+            latestMarketData = {
+              '2h': data2h || [],
+              '15m': data15m || [],
+              '5m': data5m || [],
+            };
+            console.log(`[INFO] Fetched latest market data for ${symbolToUse}`);
+          }
+        } catch (marketDataError: any) {
+          console.warn(`[WARN] Could not fetch latest market data: ${marketDataError.message}`);
+          // Continue without market data - not critical
+        }
+      } catch (priceError: any) {
+        console.error(`[ERROR] Error fetching latest data for ${symbolToUse}:`, priceError.message);
+        // Continue without latest data - not critical, but log the error
+      }
+    } else {
+      // Try to detect symbol from message if not provided
+      try {
+        const instruments = await getAvailableInstruments();
+        const detected = detectSymbolFromText(message || '', instruments);
+        if (detected) {
+          const detectedSymbol = detected.symbol;
+          console.log(`[INFO] Detected symbol from message: ${detectedSymbol}`);
+          
+          // Fetch data for detected symbol
+          try {
+            currentPriceData = await getCurrentPrice(detectedSymbol);
+            if (currentPriceData) {
+              console.log(`[INFO] Fetched current price for detected symbol ${detectedSymbol}: ${currentPriceData.price}`);
+            }
+          } catch (priceError: any) {
+            console.warn(`[WARN] Could not fetch price for detected symbol ${detectedSymbol}:`, priceError.message);
+          }
+        }
+      } catch (detectionError: any) {
+        console.warn(`[WARN] Could not detect symbol from message:`, detectionError.message);
+        // Continue without symbol detection
+      }
+    }
+
+    // Run analysis if requested and symbol is provided (use detected symbol if available)
     let analysisResult = null;
-    if (run_analysis && symbol) {
+    if (run_analysis && symbolToUse) {
       try {
         // Fetch market data for all timeframes
         const [data2h, data15m, data5m] = await Promise.all([
-          fetchMarketData(symbol, '2h', 200),
-          fetchMarketData(symbol, '15m', 200),
-          fetchMarketData(symbol, '5m', 200),
+          fetchMarketData(symbolToUse, '2h', 200),
+          fetchMarketData(symbolToUse, '15m', 200),
+          fetchMarketData(symbolToUse, '5m', 200),
         ]);
 
         // Run analysis
-        analysisResult = analyze(symbol, {
+        analysisResult = analyze(symbolToUse, {
           '2h': data2h,
           '15m': data15m,
           '5m': data5m,
@@ -202,10 +294,93 @@ Your expertise includes:
 - Session-based trading (London, New York, Asian sessions)
 - Multi-timeframe analysis (2H, 15m, 5m)
 
-You can analyze any trading symbol available on Deriv. When a user asks about a symbol, you can provide insights based on ICT/SMC principles.`;
+You can analyze any trading symbol available on Deriv. When a user asks about a symbol, you can provide insights based on ICT/SMC principles.
 
-    if (symbol) {
-      systemPrompt += `\n\nCurrent Symbol: ${symbol}`;
+ABSOLUTE REQUIREMENT - PRICES: You MUST ALWAYS provide ACTUAL LIVE PRICES from real market data. NEVER show template structures, example prices, placeholder values, or format examples. When discussing any prices (current price, entry, stop, target, support, resistance, etc.), you MUST use actual prices from the live market data provided below.`;
+
+    // Add current price data if available
+    if (currentPriceData) {
+      const priceInfo = currentPriceData.bid && currentPriceData.ask
+        ? `Current Price: ${currentPriceData.price} (Bid: ${currentPriceData.bid}, Ask: ${currentPriceData.ask})`
+        : `Current Price: ${currentPriceData.price}`;
+      const priceTime = new Date(currentPriceData.timestamp * 1000).toISOString();
+      
+      systemPrompt += `\n\nLIVE PRICE DATA (fetched just now from Deriv API):
+- Symbol: ${currentPriceData.symbol}
+- ${priceInfo}
+- Timestamp: ${priceTime}
+
+You MUST use this actual current price when discussing the symbol. This is real-time data from the Deriv API.`;
+    } else if (symbolToUse) {
+      systemPrompt += `\n\nIMPORTANT: A symbol (${symbolToUse}) was mentioned, but current price data could not be fetched at this moment. You can still provide analysis, but inform the user that live price data is temporarily unavailable.`;
+    }
+
+    // Add latest market data context if available
+    if (latestMarketData) {
+      const latest2h = latestMarketData['2h']?.[latestMarketData['2h'].length - 1];
+      const latest15m = latestMarketData['15m']?.[latestMarketData['15m'].length - 1];
+      const latest5m = latestMarketData['5m']?.[latestMarketData['5m'].length - 1];
+      
+      systemPrompt += `\n\nLATEST MARKET DATA (fetched just now from Deriv API):`;
+      if (latest2h) {
+        systemPrompt += `\n- 2H: Latest candle - Open: ${latest2h.open}, High: ${latest2h.high}, Low: ${latest2h.low}, Close: ${latest2h.close}`;
+      }
+      if (latest15m) {
+        systemPrompt += `\n- 15M: Latest candle - Open: ${latest15m.open}, High: ${latest15m.high}, Low: ${latest15m.low}, Close: ${latest15m.close}`;
+      }
+      if (latest5m) {
+        systemPrompt += `\n- 5M: Latest candle - Open: ${latest5m.open}, High: ${latest5m.high}, Low: ${latest5m.low}, Close: ${latest5m.close}`;
+      }
+      systemPrompt += `\n\nUse this latest market data to provide up-to-date analysis and insights.`;
+    }
+
+    systemPrompt += `\n\nIMPORTANT: The system automatically fetches the latest data from the Deriv API before each response. Always use the most recent data provided above when answering questions about current prices, market conditions, or recent price action.
+
+The system can fetch live market data for any symbol available on Deriv, including:
+- Current prices and real-time quotes (automatically provided above when available)
+- Historical candle data for multiple timeframes (2H, 15m, 5m)
+- Market conditions and price action
+- Available trading instruments and their details
+
+CRITICAL: Keep your responses SHORT and STRAIGHT TO THE POINT. Especially for chart analysis, screenshot analysis, or visual data - be concise and brief. Avoid lengthy explanations or text-heavy responses. Focus on key insights only.`;
+
+    // Add symbol information with confirmation
+    if (symbolToUse) {
+      // Try to get display name for the symbol
+      let displayNameForSymbol = symbolToUse;
+      if (!detectedSymbolInfo) {
+        try {
+          const instruments = await getAvailableInstruments();
+          const foundInst = instruments.find(inst => inst.symbol === symbolToUse);
+          if (foundInst) {
+            displayNameForSymbol = foundInst.display_name;
+          }
+        } catch (error) {
+          // Ignore error, use symbol as-is
+        }
+      } else {
+        displayNameForSymbol = detectedSymbolInfo.displayName;
+      }
+      
+      if (detectedSymbolInfo && !symbol) {
+        // Symbol was detected from text (not from dropdown) - always confirm
+        systemPrompt += `\n\nIMPORTANT: The user mentioned "${detectedSymbolInfo.displayName}" (symbol: ${detectedSymbolInfo.symbol}) in their message. 
+Please confirm you are analyzing the correct symbol at the beginning of your response: "${displayNameForSymbol} (${symbolToUse})".
+This ensures we're both on the same page about which instrument to analyze.`;
+      } else if (symbol && detectedSymbolInfo && detectedSymbolInfo.symbol !== symbol) {
+        // User provided symbol via dropdown but message mentions different symbol - clarify
+        systemPrompt += `\n\nIMPORTANT: The user selected symbol "${symbol}" but their message mentions "${detectedSymbolInfo.displayName}". 
+Please clarify which symbol they want to analyze, or confirm you're using the selected symbol: ${symbol}.`;
+      } else {
+        // Symbol provided via dropdown or exact match - still confirm for clarity
+        systemPrompt += `\n\nCurrent Symbol: ${displayNameForSymbol} (${symbolToUse})
+Please acknowledge this symbol at the beginning of your response to confirm you're analyzing the correct instrument.`;
+      }
+    } else if (message && (message.toLowerCase().includes('analyze') || message.toLowerCase().includes('analysis'))) {
+      // User asked for analysis but no symbol detected - ask for clarification
+      systemPrompt += `\n\nIMPORTANT: The user requested analysis but no symbol was clearly identified. 
+Please ask the user to specify which symbol/instrument they want to analyze. 
+You can suggest common symbols like Volatility 75 Index (R_75), Volatility 50 Index (R_50), Gold/USD (XAUUSD), etc.`;
     }
 
     if (analysisResult) {
@@ -287,7 +462,7 @@ You can analyze any trading symbol available on Deriv. When a user asks about a 
       .from('chat_messages')
       .insert({
         session_id,
-        symbol: symbol || null,
+        symbol: symbolToUse || null,
         role: 'assistant',
         content: assistantResponse,
       })

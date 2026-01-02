@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/client';
 import { callDeepSeekAPI } from '@/lib/api/deepseek';
+import { getCurrentPrice, fetchMarketData } from '@/lib/api/deriv';
 
 export async function GET(request: NextRequest) {
   try {
@@ -123,6 +124,8 @@ export async function POST(request: NextRequest) {
 
     // Get analysis data if not provided
     let analysisResult = analysis_data;
+    const instrumentSymbol = (analysisRun.instruments as any)?.symbol || null;
+    
     if (!analysisResult) {
       const { data: runData } = await supabase
         .from('analysis_runs')
@@ -150,6 +153,44 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // ALWAYS fetch latest data from Deriv API before responding
+    let currentPriceData = null;
+    let latestMarketData = null;
+    
+    if (instrumentSymbol) {
+      try {
+        // Fetch current price
+        currentPriceData = await getCurrentPrice(instrumentSymbol);
+        if (currentPriceData) {
+          console.log(`[INFO] Fetched current price for ${instrumentSymbol}: ${currentPriceData.price}`);
+        }
+        
+        // Fetch latest market data for context (just a few recent candles)
+        try {
+          const [data2h, data15m, data5m] = await Promise.all([
+            fetchMarketData(instrumentSymbol, '2h', 10).catch(() => null),
+            fetchMarketData(instrumentSymbol, '15m', 10).catch(() => null),
+            fetchMarketData(instrumentSymbol, '5m', 10).catch(() => null),
+          ]);
+          
+          if (data2h || data15m || data5m) {
+            latestMarketData = {
+              '2h': data2h || [],
+              '15m': data15m || [],
+              '5m': data5m || [],
+            };
+            console.log(`[INFO] Fetched latest market data for ${instrumentSymbol}`);
+          }
+        } catch (marketDataError: any) {
+          console.warn(`[WARN] Could not fetch latest market data: ${marketDataError.message}`);
+          // Continue without market data - not critical
+        }
+      } catch (priceError: any) {
+        console.error(`[ERROR] Error fetching latest data for ${instrumentSymbol}:`, priceError.message);
+        // Continue without latest data - not critical, but log the error
+      }
+    }
+
     // Helper function to convert relative URLs to absolute
     const getAbsoluteUrl = (url: string | null | undefined): string | null => {
       if (!url) return null;
@@ -167,7 +208,7 @@ export async function POST(request: NextRequest) {
     const messages: Array<{ role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string } }> }> = [];
 
     // System message with analysis context
-    const systemPrompt = `You are a trading analysis assistant. You are helping analyze an ICT (Inner Circle Trader) scalping analysis.
+    let systemPrompt = `You are a trading analysis assistant. You are helping analyze an ICT (Inner Circle Trader) scalping analysis.
 
 Analysis Summary:
 - Instrument: ${(analysisRun.instruments as any)?.symbol || 'Unknown'}
@@ -176,6 +217,42 @@ Analysis Summary:
 - 5M Direction: ${analysisResult?.timeframe_5m?.direction || 'N/A'}
 
 You have access to the full analysis data. Answer questions about the analysis, provide insights, and help with further analysis. If a screenshot is provided, analyze it in conjunction with the analysis data.`;
+
+    // Add latest price data if available
+    if (currentPriceData) {
+      const priceInfo = currentPriceData.bid && currentPriceData.ask
+        ? `Current Price: ${currentPriceData.price} (Bid: ${currentPriceData.bid}, Ask: ${currentPriceData.ask})`
+        : `Current Price: ${currentPriceData.price}`;
+      const priceTime = new Date(currentPriceData.timestamp * 1000).toISOString();
+      
+      systemPrompt += `\n\nLIVE PRICE DATA (fetched just now from Deriv API):
+- Symbol: ${currentPriceData.symbol}
+- ${priceInfo}
+- Timestamp: ${priceTime}
+
+You MUST use this actual current price when discussing the symbol. This is real-time data from the Deriv API.`;
+    }
+
+    // Add latest market data context if available
+    if (latestMarketData) {
+      const latest2h = latestMarketData['2h']?.[latestMarketData['2h'].length - 1];
+      const latest15m = latestMarketData['15m']?.[latestMarketData['15m'].length - 1];
+      const latest5m = latestMarketData['5m']?.[latestMarketData['5m'].length - 1];
+      
+      systemPrompt += `\n\nLATEST MARKET DATA (fetched just now from Deriv API):`;
+      if (latest2h) {
+        systemPrompt += `\n- 2H: Latest candle - Open: ${latest2h.open}, High: ${latest2h.high}, Low: ${latest2h.low}, Close: ${latest2h.close}`;
+      }
+      if (latest15m) {
+        systemPrompt += `\n- 15M: Latest candle - Open: ${latest15m.open}, High: ${latest15m.high}, Low: ${latest15m.low}, Close: ${latest15m.close}`;
+      }
+      if (latest5m) {
+        systemPrompt += `\n- 5M: Latest candle - Open: ${latest5m.open}, High: ${latest5m.high}, Low: ${latest5m.low}, Close: ${latest5m.close}`;
+      }
+      systemPrompt += `\n\nUse this latest market data to provide up-to-date analysis and insights.`;
+    }
+
+    systemPrompt += `\n\nIMPORTANT: The system automatically fetches the latest data from the Deriv API before each response. Always use the most recent data provided above when answering questions about current prices, market conditions, or recent price action.`;
 
     messages.push({
       role: 'system',
