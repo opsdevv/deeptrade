@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useSearchParams } from 'next/navigation';
+import React, { useState, useEffect } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import PriceDataView from '@/components/analysis/PriceDataView';
 import DeepSeekChat from '@/components/analysis/DeepSeekChat';
@@ -26,7 +26,7 @@ function JSONViewer({ data }: { data: any }) {
     setExpanded(newExpanded);
   };
 
-  const renderValue = (value: any, key: string, path: string): JSX.Element => {
+  const renderValue = (value: any, key: string, path: string): React.ReactElement => {
     if (value === null) {
       return <span className="text-gray-500">null</span>;
     }
@@ -164,7 +164,8 @@ function JSONViewer({ data }: { data: any }) {
 export default function AnalysisPage() {
   const searchParams = useSearchParams();
   const runId = searchParams.get('run_id');
-  const { user } = useAuth();
+  const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [chartData, setChartData] = useState<Record<string, TimeframeData[]>>({});
@@ -174,6 +175,14 @@ export default function AnalysisPage() {
   const [activeTimeframe, setActiveTimeframe] = useState<'2h' | '15m' | '5m'>('2h');
   const [addingToWatchlist, setAddingToWatchlist] = useState(false);
   const [watchlistStatus, setWatchlistStatus] = useState<'idle' | 'added' | 'updated'>('idle');
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!authLoading && !user) {
+      const redirectPath = runId ? `/analysis?run_id=${runId}` : '/analysis';
+      router.push(`/login?redirect=${encodeURIComponent(redirectPath)}`);
+    }
+  }, [user, authLoading, router, runId]);
 
   // Disable scroll restoration on mount
   useEffect(() => {
@@ -503,6 +512,20 @@ export default function AnalysisPage() {
     }
   };
 
+  // Show loading while checking auth
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
+        <div className="text-xl">Loading...</div>
+      </div>
+    );
+  }
+
+  // Don't render if not authenticated (will redirect)
+  if (!user) {
+    return null;
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
@@ -753,7 +776,7 @@ export default function AnalysisPage() {
           <h2 className="text-xl sm:text-2xl font-semibold mb-4">Price Data & ICT Analysis</h2>
           
           {/* Timeframe Tabs */}
-          <div className="flex gap-2 mb-4 sm:mb-6 overflow-x-auto">
+          <div className="flex gap-2 mb-4 sm:mb-6 overflow-x-auto pb-2 -mx-4 sm:mx-0 px-4 sm:px-0">
             {(['2h', '15m', '5m'] as const).map((tf) => {
               const tfLabel = tf === '2h' ? '2H' : tf === '15m' ? '15M' : '5M';
               const isActive = activeTimeframe === tf;
@@ -767,7 +790,7 @@ export default function AnalysisPage() {
                       setActiveTimeframe(tf);
                     }
                   }}
-                  className={`px-4 sm:px-6 py-2 sm:py-3 font-semibold transition-all duration-200 relative whitespace-nowrap ${
+                  className={`px-3 sm:px-4 md:px-6 py-2 sm:py-3 text-sm sm:text-base font-semibold transition-all duration-200 relative whitespace-nowrap flex-shrink-0 ${
                     isActive
                       ? 'text-blue-400 bg-gray-700'
                       : 'text-gray-400 hover:text-gray-300'
@@ -785,7 +808,7 @@ export default function AnalysisPage() {
 
           {/* Active Timeframe Content */}
           {chartData[activeTimeframe] && chartData[activeTimeframe].length > 0 ? (
-            <div className="bg-gray-900 rounded-lg p-4">
+            <div className="bg-gray-900 rounded-lg p-3 sm:p-4">
               <PriceDataView 
                 data={chartData[activeTimeframe]} 
                 timeframe={activeTimeframe} 
@@ -795,8 +818,8 @@ export default function AnalysisPage() {
               />
             </div>
           ) : (
-            <div className="bg-gray-900 rounded-lg p-8 text-center text-gray-400">
-              <p>No data available for {activeTimeframe.toUpperCase()} timeframe</p>
+            <div className="bg-gray-900 rounded-lg p-6 sm:p-8 text-center text-gray-400">
+              <p className="text-sm sm:text-base">No data available for {activeTimeframe.toUpperCase()} timeframe</p>
             </div>
           )}
         </div>
