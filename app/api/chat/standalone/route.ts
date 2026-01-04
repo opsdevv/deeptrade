@@ -96,7 +96,34 @@ export async function POST(request: NextRequest) {
     }
     
     // Use detected symbol if available, otherwise use provided symbol
-    const symbolToUse = detectedSymbol || symbol;
+    let symbolToUse: string | null = detectedSymbol || symbol;
+    
+    // Check if user mentions "price" or asks for an "update" - detect symbol if needed
+    const messageLower = (message || '').toLowerCase();
+    const mentionsPrice = messageLower.includes('price') || 
+                         messageLower.includes('current price') || 
+                         messageLower.includes('latest price') ||
+                         messageLower.includes('what is the price') ||
+                         messageLower.includes('price of');
+    const asksForUpdate = messageLower.includes('update') || 
+                          messageLower.includes('refresh') ||
+                          messageLower.includes('latest') ||
+                          messageLower.includes('current');
+    
+    // If user asks for price/update but no symbol, try to detect from message
+    if (!symbolToUse && (mentionsPrice || asksForUpdate)) {
+      try {
+        const instruments = await getAvailableInstruments();
+        const detected = detectSymbolFromText(message || '', instruments);
+        if (detected) {
+          symbolToUse = detected.symbol;
+          detectedSymbolInfo = detected;
+          console.log(`[INFO] Detected symbol from message for price/update query: ${symbolToUse}`);
+        }
+      } catch (detectionError: any) {
+        console.warn(`[WARN] Could not detect symbol from message:`, detectionError.message);
+      }
+    }
 
     let supabase;
     try {
@@ -189,67 +216,86 @@ export async function POST(request: NextRequest) {
       console.error('Error fetching history:', historyError);
     }
 
-    // ALWAYS fetch latest data from Deriv API before responding
-    // This ensures the assistant has access to live price data for any query
+    // ALWAYS fetch latest data from Deriv API before responding when a symbol is available
+    // This ensures the assistant has access to live price data for any query about any symbol
     let currentPriceData = null;
     let latestMarketData = null;
     
+    // Always fetch live data if we have a symbol (either provided or detected)
     if (symbolToUse) {
       try {
-        // Fetch current price
-        currentPriceData = await getCurrentPrice(symbolToUse);
+        console.log(`[INFO] Fetching live data from Deriv API for ${symbolToUse}...`);
+        
+        // Fetch current price in parallel with market data for better performance
+        const [priceResult, data2h, data15m, data5m] = await Promise.all([
+          getCurrentPrice(symbolToUse).catch((err) => {
+            console.warn(`[WARN] Could not fetch current price: ${err.message}`);
+            return null;
+          }),
+          fetchMarketData(symbolToUse, '2h', 10).catch(() => null),
+          fetchMarketData(symbolToUse, '15m', 10).catch(() => null),
+          fetchMarketData(symbolToUse, '5m', 10).catch(() => null),
+        ]);
+        
+        currentPriceData = priceResult;
         if (currentPriceData) {
           console.log(`[INFO] Fetched current price for ${symbolToUse}: ${currentPriceData.price}`);
-        } else {
-          console.warn(`[WARN] Could not fetch current price for ${symbolToUse}`);
         }
         
-        // Fetch latest market data for context (just a few recent candles)
-        try {
-          const [data2h, data15m, data5m] = await Promise.all([
-            fetchMarketData(symbolToUse, '2h', 10).catch(() => null),
-            fetchMarketData(symbolToUse, '15m', 10).catch(() => null),
-            fetchMarketData(symbolToUse, '5m', 10).catch(() => null),
-          ]);
-          
-          if (data2h || data15m || data5m) {
-            latestMarketData = {
-              '2h': data2h || [],
-              '15m': data15m || [],
-              '5m': data5m || [],
-            };
-            console.log(`[INFO] Fetched latest market data for ${symbolToUse}`);
-          }
-        } catch (marketDataError: any) {
-          console.warn(`[WARN] Could not fetch latest market data: ${marketDataError.message}`);
-          // Continue without market data - not critical
+        if (data2h || data15m || data5m) {
+          latestMarketData = {
+            '2h': data2h || [],
+            '15m': data15m || [],
+            '5m': data5m || [],
+          };
+          console.log(`[INFO] Fetched latest market data for ${symbolToUse} (2H: ${data2h?.length || 0}, 15M: ${data15m?.length || 0}, 5M: ${data5m?.length || 0} candles)`);
         }
-      } catch (priceError: any) {
-        console.error(`[ERROR] Error fetching latest data for ${symbolToUse}:`, priceError.message);
+      } catch (error: any) {
+        console.error(`[ERROR] Error fetching live data for ${symbolToUse}:`, error.message);
         // Continue without latest data - not critical, but log the error
       }
-    } else {
-      // Try to detect symbol from message if not provided
+    } else if (mentionsPrice || asksForUpdate) {
+      // User asked for price/update but no symbol - try to detect from message
       try {
         const instruments = await getAvailableInstruments();
         const detected = detectSymbolFromText(message || '', instruments);
         if (detected) {
-          const detectedSymbol = detected.symbol;
-          console.log(`[INFO] Detected symbol from message: ${detectedSymbol}`);
+          // Update symbolToUse so it's used consistently throughout the rest of the code
+          symbolToUse = detected.symbol;
+          detectedSymbolInfo = detected;
+          console.log(`[INFO] Detected symbol from message for price/update query: ${symbolToUse}`);
           
-          // Fetch data for detected symbol
+          // Now fetch the data with the detected symbol
           try {
-            currentPriceData = await getCurrentPrice(detectedSymbol);
+            console.log(`[INFO] Fetching live data from Deriv API for detected symbol ${symbolToUse}...`);
+            const [priceResult, data2h, data15m, data5m] = await Promise.all([
+              getCurrentPrice(symbolToUse).catch(() => null),
+              fetchMarketData(symbolToUse, '2h', 10).catch(() => null),
+              fetchMarketData(symbolToUse, '15m', 10).catch(() => null),
+              fetchMarketData(symbolToUse, '5m', 10).catch(() => null),
+            ]);
+            
+            currentPriceData = priceResult;
             if (currentPriceData) {
-              console.log(`[INFO] Fetched current price for detected symbol ${detectedSymbol}: ${currentPriceData.price}`);
+              console.log(`[INFO] Fetched current price for ${symbolToUse}: ${currentPriceData.price}`);
             }
-          } catch (priceError: any) {
-            console.warn(`[WARN] Could not fetch price for detected symbol ${detectedSymbol}:`, priceError.message);
+            
+            if (data2h || data15m || data5m) {
+              latestMarketData = {
+                '2h': data2h || [],
+                '15m': data15m || [],
+                '5m': data5m || [],
+              };
+              console.log(`[INFO] Fetched latest market data for ${symbolToUse}`);
+            }
+          } catch (fetchError: any) {
+            console.warn(`[WARN] Could not fetch data for detected symbol: ${fetchError.message}`);
           }
+        } else {
+          console.warn(`[WARN] User asked for price/update but no symbol could be determined from message or selection`);
         }
       } catch (detectionError: any) {
-        console.warn(`[WARN] Could not detect symbol from message:`, detectionError.message);
-        // Continue without symbol detection
+        console.warn(`[WARN] Error detecting symbol: ${detectionError.message}`);
       }
     }
 
@@ -301,18 +347,25 @@ ABSOLUTE REQUIREMENT - PRICES: You MUST ALWAYS provide ACTUAL LIVE PRICES from r
     // Add current price data if available
     if (currentPriceData) {
       const priceInfo = currentPriceData.bid && currentPriceData.ask
-        ? `Current Price: ${currentPriceData.price} (Bid: ${currentPriceData.bid}, Ask: ${currentPriceData.ask})`
+        ? `Current Price: ${currentPriceData.price} (Bid: ${currentPriceData.bid}, Ask: ${currentPriceData.ask}, Spread: ${(currentPriceData.ask - currentPriceData.bid).toFixed(5)})`
         : `Current Price: ${currentPriceData.price}`;
       const priceTime = new Date(currentPriceData.timestamp * 1000).toISOString();
       
-      systemPrompt += `\n\nLIVE PRICE DATA (fetched just now from Deriv API):
+      systemPrompt += `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+LIVE PRICE DATA (fetched just now from Deriv API):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 - Symbol: ${currentPriceData.symbol}
 - ${priceInfo}
 - Timestamp: ${priceTime}
+- Data Source: Deriv API (real-time WebSocket)
 
-You MUST use this actual current price when discussing the symbol. This is real-time data from the Deriv API.`;
+CRITICAL: You MUST use this EXACT current price when discussing the symbol. This is LIVE, REAL-TIME data fetched directly from Deriv API. Never use placeholder values, examples, or approximate prices.`;
+    } else if (symbolToUse && (mentionsPrice || asksForUpdate)) {
+      systemPrompt += `\n\n⚠️ IMPORTANT: The user asked about price/update for ${symbolToUse}, but current price data could not be fetched at this moment. Inform the user that live price data is temporarily unavailable and suggest they try again in a moment.`;
     } else if (symbolToUse) {
-      systemPrompt += `\n\nIMPORTANT: A symbol (${symbolToUse}) was mentioned, but current price data could not be fetched at this moment. You can still provide analysis, but inform the user that live price data is temporarily unavailable.`;
+      systemPrompt += `\n\n⚠️ IMPORTANT: A symbol (${symbolToUse}) was mentioned, but current price data could not be fetched at this moment. You can still provide analysis, but inform the user that live price data is temporarily unavailable.`;
+    } else if (mentionsPrice || asksForUpdate) {
+      systemPrompt += `\n\n⚠️ IMPORTANT: The user asked about price or requested an update, but no symbol could be identified from their message or selection. Ask the user to specify which symbol they want price information for.`;
     }
 
     // Add latest market data context if available
@@ -321,26 +374,79 @@ You MUST use this actual current price when discussing the symbol. This is real-
       const latest15m = latestMarketData['15m']?.[latestMarketData['15m'].length - 1];
       const latest5m = latestMarketData['5m']?.[latestMarketData['5m'].length - 1];
       
-      systemPrompt += `\n\nLATEST MARKET DATA (fetched just now from Deriv API):`;
+      // Calculate recent price ranges and trends
+      const getRange = (candles: any[]) => {
+        if (!candles || candles.length === 0) return null;
+        const highs = candles.map(c => c.high);
+        const lows = candles.map(c => c.low);
+        return {
+          high: Math.max(...highs),
+          low: Math.min(...lows),
+          range: Math.max(...highs) - Math.min(...lows),
+        };
+      };
+      
+      const range2h = latestMarketData['2h'] ? getRange(latestMarketData['2h']) : null;
+      const range15m = latestMarketData['15m'] ? getRange(latestMarketData['15m']) : null;
+      const range5m = latestMarketData['5m'] ? getRange(latestMarketData['5m']) : null;
+      
+      systemPrompt += `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+LATEST MARKET DATA (fetched just now from Deriv API):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Latest Candles (10 candles per timeframe):`;
+      
       if (latest2h) {
-        systemPrompt += `\n- 2H: Latest candle - Open: ${latest2h.open}, High: ${latest2h.high}, Low: ${latest2h.low}, Close: ${latest2h.close}`;
+        const candleType = latest2h.close > latest2h.open ? '🟢 BULLISH' : latest2h.close < latest2h.open ? '🔴 BEARISH' : '⚪ NEUTRAL';
+        const body = Math.abs(latest2h.close - latest2h.open);
+        const wick = latest2h.high - latest2h.low - body;
+        systemPrompt += `\n\n📊 2H TIMEFRAME (Latest candle):
+  ${candleType} | O: ${latest2h.open.toFixed(5)} | H: ${latest2h.high.toFixed(5)} | L: ${latest2h.low.toFixed(5)} | C: ${latest2h.close.toFixed(5)}
+  Body Size: ${body.toFixed(5)} | Wick Size: ${wick.toFixed(5)}`;
+        if (range2h) {
+          systemPrompt += `\n  10-Candle Range: ${range2h.low.toFixed(5)} - ${range2h.high.toFixed(5)} (${range2h.range.toFixed(5)})`;
+        }
       }
+      
       if (latest15m) {
-        systemPrompt += `\n- 15M: Latest candle - Open: ${latest15m.open}, High: ${latest15m.high}, Low: ${latest15m.low}, Close: ${latest15m.close}`;
+        const candleType = latest15m.close > latest15m.open ? '🟢 BULLISH' : latest15m.close < latest15m.open ? '🔴 BEARISH' : '⚪ NEUTRAL';
+        const body = Math.abs(latest15m.close - latest15m.open);
+        const wick = latest15m.high - latest15m.low - body;
+        systemPrompt += `\n\n📊 15M TIMEFRAME (Latest candle):
+  ${candleType} | O: ${latest15m.open.toFixed(5)} | H: ${latest15m.high.toFixed(5)} | L: ${latest15m.low.toFixed(5)} | C: ${latest15m.close.toFixed(5)}
+  Body Size: ${body.toFixed(5)} | Wick Size: ${wick.toFixed(5)}`;
+        if (range15m) {
+          systemPrompt += `\n  10-Candle Range: ${range15m.low.toFixed(5)} - ${range15m.high.toFixed(5)} (${range15m.range.toFixed(5)})`;
+        }
       }
+      
       if (latest5m) {
-        systemPrompt += `\n- 5M: Latest candle - Open: ${latest5m.open}, High: ${latest5m.high}, Low: ${latest5m.low}, Close: ${latest5m.close}`;
+        const candleType = latest5m.close > latest5m.open ? '🟢 BULLISH' : latest5m.close < latest5m.open ? '🔴 BEARISH' : '⚪ NEUTRAL';
+        const body = Math.abs(latest5m.close - latest5m.open);
+        const wick = latest5m.high - latest5m.low - body;
+        systemPrompt += `\n\n📊 5M TIMEFRAME (Latest candle):
+  ${candleType} | O: ${latest5m.open.toFixed(5)} | H: ${latest5m.high.toFixed(5)} | L: ${latest5m.low.toFixed(5)} | C: ${latest5m.close.toFixed(5)}
+  Body Size: ${body.toFixed(5)} | Wick Size: ${wick.toFixed(5)}`;
+        if (range5m) {
+          systemPrompt += `\n  10-Candle Range: ${range5m.low.toFixed(5)} - ${range5m.high.toFixed(5)} (${range5m.range.toFixed(5)})`;
+        }
       }
-      systemPrompt += `\n\nUse this latest market data to provide up-to-date analysis and insights.`;
+      
+      systemPrompt += `\n\n💡 Use this LIVE market data to provide up-to-date analysis and insights. Reference actual prices from these candles when discussing price action, support/resistance, or market structure.`;
     }
 
-    systemPrompt += `\n\nIMPORTANT: The system automatically fetches the latest data from the Deriv API before each response. Always use the most recent data provided above when answering questions about current prices, market conditions, or recent price action.
+    systemPrompt += `\n\nIMPORTANT: The system AUTOMATICALLY fetches LIVE data from the Deriv API before EACH response when a symbol is available. This means you ALWAYS have access to real-time market data.
 
-The system can fetch live market data for any symbol available on Deriv, including:
-- Current prices and real-time quotes (automatically provided above when available)
-- Historical candle data for multiple timeframes (2H, 15m, 5m)
-- Market conditions and price action
-- Available trading instruments and their details
+LIVE DATA CAPABILITIES (automatically fetched):
+- Current prices and real-time quotes (BID/ASK spreads when available)
+- Historical candle data for multiple timeframes (2H, 15m, 5m) - latest 10 candles per timeframe
+- Real-time market conditions and price action
+- Market structure and recent price movements
+
+When live data is provided above:
+- ALWAYS reference the actual current price when discussing the symbol
+- Use the latest candle data to provide context about recent price action
+- Mention that the data is LIVE and fetched in real-time from Deriv API
+- Compare current price to recent highs/lows from the candle data when relevant
 
 CRITICAL: Keep your responses SHORT and STRAIGHT TO THE POINT. Especially for chart analysis, screenshot analysis, or visual data - be concise and brief. Avoid lengthy explanations or text-heavy responses. Focus on key insights only.`;
 
