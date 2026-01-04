@@ -10,12 +10,15 @@ A Next.js TypeScript application that implements a machine-friendly ICT/SMC anal
 - **DeepSeek Integration**: AI-powered analysis prompts
 - **Supabase Integration**: Data persistence and history tracking
 - **Deriv API**: Market data fetching
+- **Redis Caching**: High-performance caching for market data and analysis results
+- **Rate Limiting**: API rate limiting to protect external services
 
 ## Tech Stack
 
 - Next.js 14+ (App Router)
 - TypeScript
 - Supabase (PostgreSQL)
+- Redis (Caching & Rate Limiting)
 - TradingView Lightweight Charts
 - DeepSeek API
 - Deriv API
@@ -36,6 +39,12 @@ DERIV_WS_URL=wss://ws.derivws.com/websockets/v3
 NEXT_PUBLIC_SUPABASE_URL=your_url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_key
 SUPABASE_SERVICE_ROLE_KEY=your_key
+
+# Redis Configuration (optional - defaults provided)
+REDIS_USERNAME=default
+REDIS_PASSWORD=your_redis_password
+REDIS_HOST=your_redis_host
+REDIS_PORT=14502
 ```
 
 **Deriv API Setup:**
@@ -66,6 +75,7 @@ deepanalysis/
 │   ├── analysis/         # Analysis engines
 │   ├── ict/             # ICT concept implementations
 │   ├── api/              # API clients
+│   ├── redis/            # Redis client and utilities
 │   └── supabase/         # Supabase client
 ├── types/                # TypeScript definitions
 └── supabase/             # Database migrations

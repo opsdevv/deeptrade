@@ -11,11 +11,18 @@ export default function Navigation() {
   const { user, loading, signOut } = useAuth();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
+  // Don't display navigation on login page
+  if (pathname === '/login') {
+    return null;
+  }
+
   const navItems = [
     { href: '/dashboard', label: 'Dashboard' },
     { href: '/chat', label: 'AI Chatbot' },
     { href: '/analysis', label: 'Analysis' },
-    { href: '/signals', label: 'Signals' },
+    { href: '/smart-trade', label: 'Smart Trade' },
+    { href: '/logs', label: 'Logs' },
+    { href: '/settings', label: 'Settings' },
   ];
 
   const handleSignOut = async () => {

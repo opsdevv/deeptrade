@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { useAuth } from '@/lib/auth/context';
 import { formatTimeWithTimezone } from '@/lib/utils/price-format';
 
 interface Instrument {
@@ -26,6 +28,8 @@ interface AnalysisHistory {
 type Category = 'all' | 'forex' | 'stock_indices' | 'commodities' | 'derived' | 'cryptocurrencies';
 
 export default function Dashboard() {
+  const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
   const [allInstruments, setAllInstruments] = useState<Instrument[]>([]);
   const [filteredInstruments, setFilteredInstruments] = useState<Instrument[]>([]);
   const [groupedInstruments, setGroupedInstruments] = useState<Record<string, Instrument[]>>({});
@@ -39,6 +43,13 @@ export default function Dashboard() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchResultsRef = useRef<HTMLDivElement>(null);
   const blurTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.push('/login?redirect=/dashboard');
+    }
+  }, [user, authLoading, router]);
 
   const applyFilters = (instruments: Instrument[], category: Category, query: string) => {
     let filtered = [...instruments];
@@ -233,6 +244,20 @@ export default function Dashboard() {
 
   const selectedInstrumentData = allInstruments.find((i) => i.symbol === selectedInstrument);
 
+  // Show loading while checking auth
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
+        <div className="text-xl">Loading...</div>
+      </div>
+    );
+  }
+
+  // Don't render if not authenticated (will redirect)
+  if (!user) {
+    return null;
+  }
+
   return (
     <div className="min-h-screen bg-gray-900 text-white p-4 sm:p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
@@ -259,7 +284,7 @@ export default function Dashboard() {
                   <button
                     key={cat}
                     onClick={() => handleCategoryChange(cat)}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
+                    className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-medium transition ${
                       selectedCategory === cat
                         ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/50'
                         : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
@@ -317,9 +342,9 @@ export default function Dashboard() {
               {showSearchResults && filteredInstruments.length > 0 && (
                 <div
                   ref={searchResultsRef}
-                  className="absolute z-50 w-full mt-2 bg-gray-800 border border-gray-600 rounded-lg shadow-2xl max-h-80 overflow-y-auto"
+                  className="absolute z-50 w-full mt-2 bg-gray-800 border border-gray-600 rounded-lg shadow-2xl max-h-60 sm:max-h-80 overflow-y-auto"
                 >
-                  <div className="px-4 py-2 text-xs text-gray-400 border-b border-gray-700 sticky top-0 bg-gray-800">
+                  <div className="px-3 sm:px-4 py-2 text-xs text-gray-400 border-b border-gray-700 sticky top-0 bg-gray-800">
                     {filteredInstruments.length} instrument{filteredInstruments.length !== 1 ? 's' : ''} found
                   </div>
                   <div className="py-1">
@@ -331,17 +356,17 @@ export default function Dashboard() {
                           e.preventDefault();
                           handleInstrumentSelect(inst);
                         }}
-                        className={`w-full text-left px-4 py-3 hover:bg-gray-700 transition ${
+                        className={`w-full text-left px-3 sm:px-4 py-2 sm:py-3 hover:bg-gray-700 transition ${
                           selectedInstrument === inst.symbol ? 'bg-blue-600/30 border-l-2 border-blue-500' : ''
                         }`}
                       >
-                        <div className="flex justify-between items-center">
-                          <div className="flex-1">
-                            <p className="font-medium text-white">{inst.display_name}</p>
+                        <div className="flex justify-between items-center gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-white text-sm sm:text-base truncate">{inst.display_name}</p>
                             <p className="text-xs text-gray-400 mt-0.5">{inst.symbol}</p>
                           </div>
                           {inst.category && (
-                            <span className="text-xs px-2 py-1 bg-gray-700 rounded ml-2">
+                            <span className="text-xs px-2 py-1 bg-gray-700 rounded ml-2 flex-shrink-0">
                               {inst.category.replace('_', ' ')}
                             </span>
                           )}
@@ -349,7 +374,7 @@ export default function Dashboard() {
                       </button>
                     ))}
                     {filteredInstruments.length > 50 && (
-                      <div className="px-4 py-2 text-xs text-gray-400 text-center border-t border-gray-700">
+                      <div className="px-3 sm:px-4 py-2 text-xs text-gray-400 text-center border-t border-gray-700">
                         Showing first 50 results. Refine your search for more.
                       </div>
                     )}
@@ -368,15 +393,15 @@ export default function Dashboard() {
 
             {/* Selected Instrument & Analyze Section */}
             {selectedInstrument && selectedInstrumentData && (
-              <div className="mt-4 p-4 bg-gradient-to-r from-blue-900/30 to-blue-800/20 border border-blue-600/30 rounded-lg">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
+              <div className="mt-4 p-3 sm:p-4 bg-gradient-to-r from-blue-900/30 to-blue-800/20 border border-blue-600/30 rounded-lg">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4">
+                  <div className="flex-1 min-w-0">
                     <p className="text-xs text-gray-400 mb-1">Selected Instrument</p>
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-lg font-bold text-white">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-base sm:text-lg font-bold text-white break-words">
                         {selectedInstrumentData.display_name}
                       </h3>
-                      <span className="text-sm text-gray-400">({selectedInstrument})</span>
+                      <span className="text-xs sm:text-sm text-gray-400">({selectedInstrument})</span>
                       {selectedInstrumentData.category && (
                         <span className="text-xs px-2 py-1 bg-blue-600/30 rounded">
                           {selectedInstrumentData.category.replace('_', ' ')}
@@ -385,7 +410,7 @@ export default function Dashboard() {
                     </div>
                   </div>
                   {loading && (
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-shrink-0">
                       <svg className="animate-spin h-5 w-5 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
@@ -404,7 +429,7 @@ export default function Dashboard() {
                 <button
                   onClick={runAnalysis}
                   disabled={loading}
-                  className={`w-full py-3 px-6 rounded-lg font-semibold text-lg transition-all transform ${
+                  className={`w-full py-2.5 sm:py-3 px-4 sm:px-6 rounded-lg font-semibold text-base sm:text-lg transition-all transform ${
                     loading
                       ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
                       : 'bg-blue-600 hover:bg-blue-700 text-white hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-blue-600/50'
@@ -416,7 +441,8 @@ export default function Dashboard() {
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                       </svg>
-                      Running Analysis...
+                      <span className="hidden sm:inline">Running Analysis...</span>
+                      <span className="sm:hidden">Running...</span>
                     </span>
                   ) : (
                     'Run Analysis'
@@ -521,14 +547,6 @@ export default function Dashboard() {
           )}
         </div>
 
-        <div className="mt-6 sm:mt-8 flex flex-col sm:flex-row gap-4">
-          <Link
-            href="/signals"
-            className="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-6 rounded-lg transition text-center w-full sm:w-auto"
-          >
-            View Signals
-          </Link>
-        </div>
       </div>
     </div>
   );

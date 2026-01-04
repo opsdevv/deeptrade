@@ -19,6 +19,12 @@ export const metadata: Metadata = {
   description: "2-Day Scalping Analysis Framework with ICT/SMC concepts",
 };
 
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 5,
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{

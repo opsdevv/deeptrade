@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { formatTimeOnlyWithTimezone } from '@/lib/utils/price-format';
 import { TextWithClickableNumbers } from '@/components/ui/ClickableNumber';
+import ScalpingSetupLedger, { parseScalpingSetups } from './ScalpingSetupLedger';
 
 interface DerivInstrument {
   symbol: string;
@@ -127,6 +128,10 @@ export default function TradingChatbot() {
     setInput('');
     setScreenshotFile(null);
     setScreenshotPreview(null);
+    // Close sidebar on mobile after selecting a session
+    if (window.innerWidth < 768) {
+      setSidebarOpen(false);
+    }
   };
 
   const createNewSession = () => {
@@ -398,10 +403,21 @@ export default function TradingChatbot() {
   };
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] bg-gray-900">
-      {/* Sidebar */}
+    <div className="flex h-[calc(100vh-4rem)] bg-gray-900 relative">
+      {/* Mobile Overlay */}
       {sidebarOpen && (
-        <div className="w-64 transition-all duration-300 bg-gray-800 border-r border-gray-700 flex flex-col overflow-hidden">
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      {/* Sidebar */}
+      <div
+        className={`${
+          sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+        } fixed md:relative w-64 h-full transition-all duration-300 bg-gray-800 border-r border-gray-700 flex flex-col overflow-hidden z-50 md:z-auto`}
+      >
         <div className="p-4 border-b border-gray-700">
           <button
             onClick={createNewSession}
@@ -470,19 +486,18 @@ export default function TradingChatbot() {
           )}
         </div>
       </div>
-      )}
 
       {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 w-full">
         {/* Header with Symbol Selection and Sidebar Toggle */}
-        <div className="bg-gray-800 border-b border-gray-700 p-4">
-          <div className="max-w-4xl mx-auto flex items-center gap-4">
+        <div className="bg-gray-800 border-b border-gray-700 p-3 sm:p-4">
+          <div className="max-w-4xl mx-auto flex items-center gap-2 sm:gap-4">
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="text-gray-400 hover:text-white transition"
+              className="text-gray-400 hover:text-white transition flex-shrink-0"
               title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
             >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 {sidebarOpen ? (
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 ) : (
@@ -490,14 +505,14 @@ export default function TradingChatbot() {
                 )}
               </svg>
             </button>
-            <label className="text-sm font-medium text-gray-300">
+            <label className="text-xs sm:text-sm font-medium text-gray-300 whitespace-nowrap">
               Symbol:
             </label>
             <select
               value={selectedSymbol}
               onChange={(e) => setSelectedSymbol(e.target.value)}
               disabled={loadingInstruments}
-              className="flex-1 bg-gray-700 text-white border border-gray-600 rounded px-4 py-2 disabled:opacity-50"
+              className="flex-1 min-w-0 bg-gray-700 text-white border border-gray-600 rounded px-2 sm:px-4 py-2 text-sm disabled:opacity-50"
             >
               {loadingInstruments ? (
                 <option>Loading symbols...</option>
@@ -513,15 +528,15 @@ export default function TradingChatbot() {
         </div>
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto p-4">
-        <div className="max-w-4xl mx-auto space-y-4">
+      <div className="flex-1 overflow-y-auto p-3 sm:p-4">
+        <div className="max-w-4xl mx-auto space-y-3 sm:space-y-4">
           {messages.length === 0 && (
-            <div className="text-center text-gray-400 mt-8">
-              <p className="text-lg mb-2">Welcome to the Trading AI Chatbot!</p>
-              <p className="text-sm">
+            <div className="text-center text-gray-400 mt-4 sm:mt-8 px-4">
+              <p className="text-base sm:text-lg mb-2">Welcome to the Trading AI Chatbot!</p>
+              <p className="text-xs sm:text-sm">
                 Ask me about any symbol, request analysis, or paste/upload screenshots for analysis.
               </p>
-              <p className="text-sm mt-2">
+              <p className="text-xs sm:text-sm mt-2">
                 Try: &quot;Analyze {selectedSymbol}&quot; or &quot;What&apos;s the current bias for {selectedSymbol}?&quot;
               </p>
             </div>
@@ -533,7 +548,7 @@ export default function TradingChatbot() {
               className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               <div
-                className={`max-w-3xl rounded-lg p-4 ${
+                className={`max-w-[85%] sm:max-w-3xl rounded-lg p-3 sm:p-4 ${
                   message.role === 'user'
                     ? 'bg-blue-600 text-white'
                     : 'bg-gray-800 text-gray-100'
@@ -548,9 +563,22 @@ export default function TradingChatbot() {
                     />
                   </div>
                 )}
-                <div className="whitespace-pre-wrap break-words">
+                <div className="whitespace-pre-wrap break-words text-sm sm:text-base">
                   <TextWithClickableNumbers text={message.content} />
                 </div>
+                {message.role === 'assistant' && (() => {
+                  const setups = parseScalpingSetups(message.content);
+                  if (setups.length > 0) {
+                    return (
+                      <ScalpingSetupLedger
+                        setups={setups}
+                        symbol={selectedSymbol}
+                        messageId={message.id}
+                      />
+                    );
+                  }
+                  return null;
+                })()}
                 <div className="text-xs mt-2 opacity-70">
                   {formatTimeOnlyWithTimezone(message.created_at)}
                 </div>
@@ -574,7 +602,7 @@ export default function TradingChatbot() {
       </div>
 
       {/* Input Area */}
-      <div className="bg-gray-800 border-t border-gray-700 p-4">
+      <div className="bg-gray-800 border-t border-gray-700 p-3 sm:p-4">
         <div className="max-w-4xl mx-auto">
           {/* Screenshot Preview */}
           {screenshotPreview && (
@@ -582,7 +610,7 @@ export default function TradingChatbot() {
               <img
                 src={screenshotPreview}
                 alt="Preview"
-                className="max-w-xs h-auto rounded border border-gray-600"
+                className="max-w-[200px] sm:max-w-xs h-auto rounded border border-gray-600"
               />
               <button
                 onClick={removeScreenshot}
@@ -604,11 +632,11 @@ export default function TradingChatbot() {
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={uploading || loading}
-              className="bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg transition flex items-center gap-2"
+              className="bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:cursor-not-allowed text-white px-3 sm:px-4 py-2 rounded-lg transition flex items-center gap-1 sm:gap-2 flex-shrink-0"
               title="Upload screenshot"
             >
               <svg
-                className="w-5 h-5"
+                className="w-4 h-4 sm:w-5 sm:h-5"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -620,6 +648,7 @@ export default function TradingChatbot() {
                   d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
                 />
               </svg>
+              <span className="hidden sm:inline">Upload</span>
             </button>
             <textarea
               value={input}
@@ -628,15 +657,29 @@ export default function TradingChatbot() {
               onPaste={handlePaste}
               placeholder="Ask about any symbol, request analysis, or paste/upload screenshots..."
               disabled={loading || uploading}
-              className="flex-1 bg-gray-700 text-white border border-gray-600 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed resize-none"
+              className="flex-1 bg-gray-700 text-white border border-gray-600 rounded-lg px-3 sm:px-4 py-2 text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed resize-none min-w-0"
               rows={2}
             />
             <button
               onClick={handleSend}
               disabled={loading || uploading || (!input.trim() && !screenshotFile)}
-              className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold px-6 py-2 rounded-lg transition"
+              className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold px-4 sm:px-6 py-2 rounded-lg transition text-sm sm:text-base flex-shrink-0"
             >
-              {loading ? 'Sending...' : 'Send'}
+              {loading ? (
+                <span className="hidden sm:inline">Sending...</span>
+              ) : (
+                <span className="hidden sm:inline">Send</span>
+              )}
+              {loading ? (
+                <svg className="w-5 h-5 sm:hidden animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+              ) : (
+                <svg className="w-5 h-5 sm:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                </svg>
+              )}
             </button>
           </div>
         </div>

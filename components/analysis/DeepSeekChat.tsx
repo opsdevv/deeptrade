@@ -186,10 +186,10 @@ export default function DeepSeekChat({ runId, analysisData }: DeepSeekChatProps)
   };
 
   return (
-    <div className="bg-gray-800 rounded-lg p-6 flex flex-col h-[600px]">
-      <div className="flex justify-between items-center mb-4">
-        <h2 className="text-2xl font-semibold">DeepSeek AI Chat</h2>
-        <span className="text-sm text-gray-400">Ask questions about this analysis</span>
+    <div className="bg-gray-800 rounded-lg p-4 sm:p-6 flex flex-col h-[500px] sm:h-[600px]">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 sm:gap-0 mb-4">
+        <h2 className="text-xl sm:text-2xl font-semibold">DeepSeek AI Chat</h2>
+        <span className="text-xs sm:text-sm text-gray-400">Ask questions about this analysis</span>
       </div>
 
       {/* Messages */}
@@ -206,7 +206,7 @@ export default function DeepSeekChat({ runId, analysisData }: DeepSeekChatProps)
               className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               <div
-                className={`max-w-[80%] rounded-lg p-4 ${
+                className={`max-w-[85%] sm:max-w-[80%] rounded-lg p-3 sm:p-4 ${
                   message.role === 'user'
                     ? 'bg-blue-600 text-white'
                     : 'bg-gray-700 text-gray-100'
@@ -221,7 +221,7 @@ export default function DeepSeekChat({ runId, analysisData }: DeepSeekChatProps)
                     />
                   </div>
                 )}
-                <div className="whitespace-pre-wrap break-words">
+                <div className="whitespace-pre-wrap break-words text-sm sm:text-base">
                   <TextWithClickableNumbers text={message.content} />
                 </div>
                 <div className="text-xs mt-2 opacity-70">
@@ -273,11 +273,11 @@ export default function DeepSeekChat({ runId, analysisData }: DeepSeekChatProps)
         <button
           onClick={() => fileInputRef.current?.click()}
           disabled={uploading || loading}
-          className="bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg transition flex items-center gap-2"
+          className="bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:cursor-not-allowed text-white px-3 sm:px-4 py-2 rounded-lg transition flex items-center gap-1 sm:gap-2 flex-shrink-0"
           title="Upload screenshot"
         >
           <svg
-            className="w-5 h-5"
+            className="w-4 h-4 sm:w-5 sm:h-5"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -289,6 +289,7 @@ export default function DeepSeekChat({ runId, analysisData }: DeepSeekChatProps)
               d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
             />
           </svg>
+          <span className="hidden sm:inline">Upload</span>
         </button>
         <textarea
           value={input}
@@ -296,15 +297,29 @@ export default function DeepSeekChat({ runId, analysisData }: DeepSeekChatProps)
           onKeyPress={handleKeyPress}
           placeholder="Ask a question or upload a screenshot..."
           disabled={loading || uploading}
-          className="flex-1 bg-gray-700 text-white border border-gray-600 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed resize-none"
+          className="flex-1 bg-gray-700 text-white border border-gray-600 rounded-lg px-3 sm:px-4 py-2 text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed resize-none min-w-0"
           rows={2}
         />
         <button
           onClick={sendMessage}
           disabled={loading || uploading || (!input.trim() && !screenshotFile)}
-          className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold px-6 py-2 rounded-lg transition"
+          className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold px-4 sm:px-6 py-2 rounded-lg transition text-sm sm:text-base flex-shrink-0"
         >
-          {loading ? 'Sending...' : 'Send'}
+          {loading ? (
+            <span className="hidden sm:inline">Sending...</span>
+          ) : (
+            <span className="hidden sm:inline">Send</span>
+          )}
+          {loading ? (
+            <svg className="w-5 h-5 sm:hidden animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          ) : (
+            <svg className="w-5 h-5 sm:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+            </svg>
+          )}
         </button>
       </div>
     </div>

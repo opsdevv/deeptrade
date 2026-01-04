@@ -5,7 +5,7 @@ import WebSocket from 'ws';
 
 const DERIV_WS_URL = process.env.DERIV_WS_URL || 'wss://ws.derivws.com/websockets/v3';
 const DERIV_APP_ID = process.env.DERIV_APP_ID || '1089'; // Default test app ID
-const DERIV_API_KEY = process.env.DERIV_API_KEY;
+const DERIV_API_KEY = process.env.DERIV_API_KEY || '25hYKarkuJw1gis';
 
 // WebSocket connection pool for reuse
 let wsConnection: WebSocket | null = null;
@@ -742,6 +742,118 @@ export async function getAvailableInstruments(): Promise<DerivInstrument[]> {
   return defaultInstruments;
 }
 
+export interface DerivAccountInfo {
+  account_id: string;
+  account_type: string;
+  balance?: number;
+  currency?: string;
+  email?: string;
+  loginid?: string;
+  country?: string;
+  landing_company_name?: string;
+  landing_company_shortcode?: string;
+  is_virtual?: number;
+}
+
+/**
+ * Get list of accounts from Deriv API
+ * Requires authentication token
+ */
+export async function getAccountList(authToken: string): Promise<DerivAccountInfo[]> {
+  try {
+    // Create a new connection with the auth token
+    const ws = new WebSocket(`${DERIV_WS_URL}?app_id=${DERIV_APP_ID}`);
+    let requestId = 1;
+    const authReqId = requestId++;
+    const accountListReqId = requestId++;
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        ws.close();
+        reject(new Error('Account list request timeout'));
+      }, 15000);
+
+      ws.on('open', () => {
+        // First authorize with the token
+        ws.send(JSON.stringify({
+          authorize: authToken,
+          req_id: authReqId,
+        }));
+      });
+
+      ws.on('message', (data: WebSocket.Data) => {
+        try {
+          const message = JSON.parse(data.toString());
+
+          if (message.req_id === authReqId) {
+            if (message.error) {
+              clearTimeout(timeout);
+              ws.close();
+              reject(new Error(message.error.message || 'Authorization failed'));
+            } else if (message.authorize) {
+              // Authorization successful, now get account list
+              ws.send(JSON.stringify({
+                account_list: 1,
+                req_id: accountListReqId,
+              }));
+            }
+            } else if (message.req_id === accountListReqId) {
+            clearTimeout(timeout);
+            ws.close();
+
+            if (message.error) {
+              reject(new Error(message.error.message || 'Failed to get account list'));
+            } else if (message.account_list) {
+              // Handle both array and single object responses
+              let accounts: any[] = [];
+              if (Array.isArray(message.account_list)) {
+                accounts = message.account_list;
+              } else if (typeof message.account_list === 'object') {
+                // If it's a single account object, wrap it in an array
+                accounts = [message.account_list];
+              }
+              
+              const accountInfos: DerivAccountInfo[] = accounts
+                .filter((acc: any) => acc && (acc.loginid || acc.account_id)) // Filter out invalid accounts
+                .map((acc: any) => ({
+                  account_id: acc.loginid || acc.account_id || '',
+                  account_type: acc.account_type || acc.landing_company_shortcode || '',
+                  balance: acc.balance !== undefined && acc.balance !== null ? parseFloat(String(acc.balance)) : undefined,
+                  currency: acc.currency || 'USD',
+                  email: acc.email,
+                  loginid: acc.loginid || acc.account_id,
+                  country: acc.country,
+                  landing_company_name: acc.landing_company_name,
+                  landing_company_shortcode: acc.landing_company_shortcode,
+                  is_virtual: acc.is_virtual !== undefined ? Number(acc.is_virtual) : undefined,
+                }));
+
+              if (accountInfos.length === 0) {
+                reject(new Error('No valid accounts found in response'));
+              } else {
+                resolve(accountInfos);
+              }
+            } else {
+              reject(new Error('Unexpected response format: account_list not found'));
+            }
+          }
+        } catch (error: any) {
+          clearTimeout(timeout);
+          ws.close();
+          reject(new Error(`Failed to parse response: ${error.message}`));
+        }
+      });
+
+      ws.on('error', (error) => {
+        clearTimeout(timeout);
+        reject(new Error(`WebSocket error: ${error.message}`));
+      });
+    });
+  } catch (error: any) {
+    throw new Error(`Failed to get account list: ${error.message}`);
+  }
+}
+
 /**
  * Get default instrument list with categories
  * Comprehensive list of all Deriv symbols organized by category
@@ -953,4 +1065,196 @@ function getDefaultInstruments(): DerivInstrument[] {
     { symbol: 'CRYBTCUSD', display_name: 'BTC/USD', category: 'cryptocurrencies' },
     { symbol: 'CRYETHUSD', display_name: 'ETH/USD', category: 'cryptocurrencies' },
   ];
+}
+
+// ============================================
+// TRADING FUNCTIONS
+// ============================================
+
+export interface ContractProposalParams {
+  amount: number;
+  basis: 'stake' | 'payout';
+  contract_type: 'CALL' | 'PUT' | 'RISE' | 'FALL' | 'HIGHER' | 'LOWER';
+  currency: string;
+  duration: number;
+  duration_unit: 's' | 'm' | 'h' | 'd' | 't';
+  symbol: string;
+}
+
+export interface ContractProposal {
+  id: string;
+  ask_price: number;
+  date_start: number;
+  payout: number;
+  spot: number;
+}
+
+/**
+ * Get contract proposal from Deriv API
+ */
+export async function getContractProposal(
+  params: ContractProposalParams
+): Promise<{ proposal: ContractProposal }> {
+  try {
+    const response = await sendRequest({
+      proposal: 1,
+      amount: params.amount,
+      basis: params.basis,
+      contract_type: params.contract_type,
+      currency: params.currency,
+      duration: params.duration,
+      duration_unit: params.duration_unit,
+      symbol: params.symbol,
+    }, 10000);
+
+    if (response.error) {
+      throw new Error(response.error.message || 'Failed to get contract proposal');
+    }
+
+    if (!response.proposal) {
+      throw new Error('No proposal returned from API');
+    }
+
+    return {
+      proposal: {
+        id: response.proposal.id,
+        ask_price: parseFloat(response.proposal.ask_price || response.proposal.price || '0'),
+        date_start: response.proposal.date_start || Date.now() / 1000,
+        payout: parseFloat(response.proposal.payout || '0'),
+        spot: parseFloat(response.proposal.spot || '0'),
+      },
+    };
+  } catch (error: any) {
+    throw new Error(`Failed to get contract proposal: ${error.message}`);
+  }
+}
+
+/**
+ * Buy a contract using proposal ID
+ */
+export async function buyContract(
+  proposalId: string,
+  price: number
+): Promise<{ contract_id: string; buy_price: number }> {
+  try {
+    const response = await sendRequest({
+      buy: proposalId,
+      price: price,
+    }, 15000);
+
+    if (response.error) {
+      throw new Error(response.error.message || 'Failed to buy contract');
+    }
+
+    if (!response.buy) {
+      throw new Error('No buy response from API');
+    }
+
+    return {
+      contract_id: response.buy.contract_id || response.buy.contractId,
+      buy_price: parseFloat(response.buy.buy_price || response.buy.price || '0'),
+    };
+  } catch (error: any) {
+    throw new Error(`Failed to buy contract: ${error.message}`);
+  }
+}
+
+/**
+ * Sell a contract (close position)
+ */
+export async function sellContract(
+  contractId: string,
+  price: number = 0
+): Promise<{ sell_price: number; profit: number }> {
+  try {
+    const response = await sendRequest({
+      sell: contractId,
+      price: price, // 0 = sell at market
+    }, 15000);
+
+    if (response.error) {
+      throw new Error(response.error.message || 'Failed to sell contract');
+    }
+
+    if (!response.sell) {
+      throw new Error('No sell response from API');
+    }
+
+    return {
+      sell_price: parseFloat(response.sell.sell_price || response.sell.price || '0'),
+      profit: parseFloat(response.sell.profit || '0'),
+    };
+  } catch (error: any) {
+    throw new Error(`Failed to sell contract: ${error.message}`);
+  }
+}
+
+/**
+ * Get portfolio (active contracts)
+ */
+export async function getPortfolio(): Promise<any[]> {
+  try {
+    const response = await sendRequest({
+      portfolio: 1,
+    }, 10000);
+
+    if (response.error) {
+      throw new Error(response.error.message || 'Failed to get portfolio');
+    }
+
+    if (response.portfolio) {
+      // Handle both array and object responses
+      if (Array.isArray(response.portfolio)) {
+        return response.portfolio;
+      } else if (typeof response.portfolio === 'object') {
+        return [response.portfolio];
+      }
+    }
+
+    return [];
+  } catch (error: any) {
+    throw new Error(`Failed to get portfolio: ${error.message}`);
+  }
+}
+
+/**
+ * Get contract information
+ */
+export async function getContractInfo(contractId: string): Promise<any> {
+  try {
+    const response = await sendRequest({
+      contract_info: 1,
+      contract_id: contractId,
+    }, 10000);
+
+    if (response.error) {
+      throw new Error(response.error.message || 'Failed to get contract info');
+    }
+
+    return response.contract_info || response;
+  } catch (error: any) {
+    throw new Error(`Failed to get contract info: ${error.message}`);
+  }
+}
+
+/**
+ * Determine contract type based on symbol and direction
+ */
+export function getContractType(symbol: string, direction: 'long' | 'short'): 'CALL' | 'PUT' | 'RISE' | 'FALL' {
+  const upperSymbol = symbol.toUpperCase();
+  
+  // Synthetic indices use RISE/FALL
+  if (upperSymbol.startsWith('R_') || 
+      upperSymbol.startsWith('1HZ') ||
+      upperSymbol.startsWith('BOOM') ||
+      upperSymbol.startsWith('CRASH') ||
+      upperSymbol.startsWith('JD') ||
+      upperSymbol.startsWith('RB') ||
+      upperSymbol.startsWith('STPRNG') ||
+      upperSymbol.startsWith('DEX')) {
+    return direction === 'long' ? 'RISE' : 'FALL';
+  }
+  
+  // Forex and other instruments use CALL/PUT
+  return direction === 'long' ? 'CALL' : 'PUT';
 }

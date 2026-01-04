@@ -3,9 +3,37 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { DataRequest, Timeframe } from '@/types/analysis';
 import { fetchMarketDataForTimeframes } from '@/lib/data/fetcher';
+import { checkRateLimit, RateLimits } from '@/lib/redis/rate-limit';
 
 export async function POST(request: NextRequest) {
   try {
+    // Rate limiting
+    const clientId = request.headers.get('x-forwarded-for') || 
+                     request.headers.get('x-real-ip') || 
+                     'unknown';
+    const rateLimit = await checkRateLimit('marketData', {
+      ...RateLimits.marketData,
+      identifier: clientId,
+    });
+
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { 
+          error: 'Rate limit exceeded',
+          remaining: rateLimit.remaining,
+          resetAt: rateLimit.resetAt,
+        },
+        { 
+          status: 429,
+          headers: {
+            'X-RateLimit-Limit': RateLimits.marketData.maxRequests.toString(),
+            'X-RateLimit-Remaining': rateLimit.remaining.toString(),
+            'X-RateLimit-Reset': new Date(rateLimit.resetAt).toISOString(),
+          },
+        }
+      );
+    }
+
     const body: DataRequest = await request.json();
 
     if (!body.instrument || !body.timeframes || body.timeframes.length === 0) {
@@ -26,6 +54,12 @@ export async function POST(request: NextRequest) {
       instrument: body.instrument,
       data,
       timestamp: Date.now(),
+    }, {
+      headers: {
+        'X-RateLimit-Limit': RateLimits.marketData.maxRequests.toString(),
+        'X-RateLimit-Remaining': rateLimit.remaining.toString(),
+        'X-RateLimit-Reset': new Date(rateLimit.resetAt).toISOString(),
+      },
     });
   } catch (error: any) {
     console.error('Error fetching market data:', error);

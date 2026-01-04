@@ -3,6 +3,7 @@
 import { TimeframeData, Timeframe } from '@/types/analysis';
 import { fetchMarketData } from '@/lib/api/deriv';
 import { normalizeData, enforce48hWindow, validateData } from './processor';
+import { redisCache, CacheKeys } from '@/lib/redis/client';
 
 /**
  * Fetch and process market data for multiple timeframes
@@ -20,6 +21,16 @@ export async function fetchMarketDataForTimeframes(
       fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/data/fetcher.ts:17',message:'Starting fetch for timeframe',data:{symbol,timeframe:tf},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
       // #endregion
       
+      // Check Redis cache first
+      const cacheKey = CacheKeys.marketData(symbol, tf);
+      const cachedData = await redisCache.get<TimeframeData[]>(cacheKey);
+      
+      if (cachedData && cachedData.length > 0) {
+        console.log(`[Cache] Using cached market data for ${symbol} ${tf}`);
+        return { timeframe: tf, data: cachedData };
+      }
+      
+      // Fetch from API if not in cache
       const rawData = await fetchMarketData(symbol, tf, 500); // Get more data than needed
       
       // #region agent log
@@ -49,6 +60,10 @@ export async function fetchMarketDataForTimeframes(
       // #region agent log
       fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/data/fetcher.ts:49',message:'Successfully processed timeframe',data:{timeframe:tf,validatedLength:validated.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
       // #endregion
+      
+      // Cache the processed data (TTL: 5 minutes for 5m, 15 minutes for 15m, 30 minutes for 2h)
+      const ttl = tf === '5m' ? 300 : tf === '15m' ? 900 : 1800;
+      await redisCache.set(cacheKey, validated, ttl);
       
       return { timeframe: tf, data: validated };
     } catch (error) {

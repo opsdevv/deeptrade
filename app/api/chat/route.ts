@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/client';
 import { callDeepSeekAPI } from '@/lib/api/deepseek';
 import { getCurrentPrice, fetchMarketData } from '@/lib/api/deriv';
+import { checkRateLimit, RateLimits } from '@/lib/redis/rate-limit';
 
 export async function GET(request: NextRequest) {
   try {
@@ -52,6 +53,33 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    // Rate limiting for chat (DeepSeek API calls)
+    const clientId = request.headers.get('x-forwarded-for') || 
+                     request.headers.get('x-real-ip') || 
+                     'unknown';
+    const rateLimit = await checkRateLimit('chat', {
+      ...RateLimits.chat,
+      identifier: clientId,
+    });
+
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { 
+          error: 'Rate limit exceeded. Please wait before sending another message.',
+          remaining: rateLimit.remaining,
+          resetAt: rateLimit.resetAt,
+        },
+        { 
+          status: 429,
+          headers: {
+            'X-RateLimit-Limit': RateLimits.chat.maxRequests.toString(),
+            'X-RateLimit-Remaining': rateLimit.remaining.toString(),
+            'X-RateLimit-Reset': new Date(rateLimit.resetAt).toISOString(),
+          },
+        }
+      );
+    }
+
     const body = await request.json();
     const { run_id, message, screenshot_url, analysis_data } = body;
 
@@ -322,6 +350,12 @@ You MUST use this actual current price when discussing the symbol. This is real-
     return NextResponse.json({
       success: true,
       messages: [userMessage, assistantMessage].filter(Boolean),
+    }, {
+      headers: {
+        'X-RateLimit-Limit': RateLimits.chat.maxRequests.toString(),
+        'X-RateLimit-Remaining': rateLimit.remaining.toString(),
+        'X-RateLimit-Reset': new Date(rateLimit.resetAt).toISOString(),
+      },
     });
   } catch (error: any) {
     console.error('Error in POST /api/chat:', error);

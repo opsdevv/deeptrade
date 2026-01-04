@@ -5,9 +5,8 @@ import { AnalysisRequest, TimeframeData } from '@/types/analysis';
 import { analyze } from '@/lib/analysis/engine';
 import { fetchMarketDataForTimeframes } from '@/lib/data/fetcher';
 import { createServerClient } from '@/lib/supabase/client';
-
-// Simple in-memory cache for analysis results (when Supabase not available)
-const analysisCache = new Map<string, any>();
+import { redisCache, CacheKeys } from '@/lib/redis/client';
+import { checkRateLimit, RateLimits } from '@/lib/redis/rate-limit';
 
 export async function GET(request: NextRequest) {
   try {
@@ -21,11 +20,12 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Try to get from cache first (for temp IDs)
-    if (runId.startsWith('temp-') && analysisCache.has(runId)) {
+    // Try to get from Redis cache first (for temp IDs and all cached results)
+    const cachedResult = await redisCache.get(CacheKeys.analysis(runId));
+    if (cachedResult) {
       return NextResponse.json({
         success: true,
-        result: analysisCache.get(runId),
+        result: cachedResult,
       });
     }
 
@@ -44,6 +44,9 @@ export async function GET(request: NextRequest) {
           .select(`
             id,
             instrument_id,
+            timestamp,
+            data_window_start,
+            data_window_end,
             instruments!inner(symbol),
             analysis_results(timeframe, result_data),
             trade_signals(signal_type, direction, entry_zone, stop_level, target_zone, confidence, signal_data)
@@ -53,15 +56,16 @@ export async function GET(request: NextRequest) {
 
         if (!runError && analysisRun) {
           // Reconstruct analysis result from database
-          const instrument = (analysisRun.instruments as any)?.symbol || 'UNKNOWN';
-          const results = (analysisRun.analysis_results as any[]) || [];
-          const signal = (analysisRun.trade_signals as any[])?.[0];
+          const run = analysisRun as any;
+          const instrument = (run.instruments as any)?.symbol || 'UNKNOWN';
+          const results = (run.analysis_results as any[]) || [];
+          const signal = (run.trade_signals as any[])?.[0];
 
           const analysisResult = {
             instrument,
-            timestamp: new Date(analysisRun.timestamp).getTime(),
-            data_window_start: new Date(analysisRun.data_window_start).getTime(),
-            data_window_end: new Date(analysisRun.data_window_end).getTime(),
+            timestamp: new Date(run.timestamp).getTime(),
+            data_window_start: new Date(run.data_window_start).getTime(),
+            data_window_end: new Date(run.data_window_end).getTime(),
             timeframe_2h: results.find((r) => r.timeframe === '2h')?.result_data || {},
             timeframe_15m: results.find((r) => r.timeframe === '15m')?.result_data || {},
             timeframe_5m: results.find((r) => r.timeframe === '5m')?.result_data || {},
@@ -69,6 +73,9 @@ export async function GET(request: NextRequest) {
             session_valid: true,
             instrument_config: signal?.signal_data?.instrument_config || {},
           };
+
+          // Cache the result in Redis (1 hour TTL)
+          await redisCache.set(CacheKeys.analysis(runId), analysisResult, 3600);
 
           return NextResponse.json({
             success: true,
@@ -96,6 +103,33 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    // Rate limiting
+    const clientId = request.headers.get('x-forwarded-for') || 
+                     request.headers.get('x-real-ip') || 
+                     'unknown';
+    const rateLimit = await checkRateLimit('analysis', {
+      ...RateLimits.analysis,
+      identifier: clientId,
+    });
+
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { 
+          error: 'Rate limit exceeded. Please wait before running another analysis.',
+          remaining: rateLimit.remaining,
+          resetAt: rateLimit.resetAt,
+        },
+        { 
+          status: 429,
+          headers: {
+            'X-RateLimit-Limit': RateLimits.analysis.maxRequests.toString(),
+            'X-RateLimit-Remaining': rateLimit.remaining.toString(),
+            'X-RateLimit-Reset': new Date(rateLimit.resetAt).toISOString(),
+          },
+        }
+      );
+    }
+
     const body: AnalysisRequest = await request.json();
 
     if (!body.instrument) {
@@ -279,20 +313,22 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Store in cache if using temp ID
-      if (runId.startsWith('temp-')) {
-        analysisCache.set(runId, result);
-        // Clean up old cache entries (keep last 10)
-        if (analysisCache.size > 10) {
-          const firstKey = analysisCache.keys().next().value;
-          analysisCache.delete(firstKey);
-        }
+      // Store in Redis cache (1 hour TTL for temp IDs, 24 hours for real IDs)
+      if (runId) {
+        const cacheTTL = runId.startsWith('temp-') ? 3600 : 86400; // 1 hour or 24 hours
+        await redisCache.set(CacheKeys.analysis(runId), result, cacheTTL);
       }
 
       return NextResponse.json({
         success: true,
         analysis_run_id: runId,
         result,
+      }, {
+        headers: {
+          'X-RateLimit-Limit': RateLimits.analysis.maxRequests.toString(),
+          'X-RateLimit-Remaining': rateLimit.remaining.toString(),
+          'X-RateLimit-Reset': new Date(rateLimit.resetAt).toISOString(),
+        },
       });
     } catch (error: any) {
       
