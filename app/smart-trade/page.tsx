@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { formatTimeOnlyWithTimezone } from '@/lib/utils/price-format';
+import { subscribeToTicks } from '@/lib/api/deriv';
 
 interface Trade {
   id: string;
@@ -25,19 +26,8 @@ interface Trade {
   created_at: string;
   updated_at: string;
   closed_at: string | null;
-}
-
-interface DerivAccount {
-  id: string;
-  account_name: string;
-  broker: string;
-  server: string;
-  account_type: 'real' | 'demo';
-  account_id: string | null;
-  balance: number | null;
-  currency: string;
-  is_active: boolean;
-  is_selected: boolean;
+  contract_id?: string;
+  contract_type?: string;
 }
 
 interface DerivApiAccount {
@@ -53,30 +43,73 @@ interface DerivApiAccount {
   is_virtual?: number;
 }
 
+interface Instrument {
+  symbol: string;
+  display_name: string;
+  category?: string;
+}
+
+interface SetupCondition {
+  id: string;
+  label: string;
+  met: boolean;
+}
+
+interface AnalysisStatus {
+  analyzing: boolean;
+  setupFound: boolean;
+  conditions: SetupCondition[];
+  entryPrice?: number;
+  stopLoss?: number;
+  targetPrice?: number;
+  direction?: 'long' | 'short';
+  timeframe: string;
+}
+
 export default function SmartTradePage() {
   const router = useRouter();
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);
-  const [accounts, setAccounts] = useState<DerivAccount[]>([]);
   const [derivApiAccounts, setDerivApiAccounts] = useState<DerivApiAccount[]>([]);
-  const [selectedAccount, setSelectedAccount] = useState<DerivAccount | null>(null);
   const [selectedDerivAccount, setSelectedDerivAccount] = useState<DerivApiAccount | null>(null);
   const [loadingDerivAccounts, setLoadingDerivAccounts] = useState(false);
   const [derivAccountsError, setDerivAccountsError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'active' | 'closed' | 'all'>('active');
+  const [activeTab, setActiveTab] = useState<'active' | 'closed' | 'all' | 'history'>('active');
   const [editingNotes, setEditingNotes] = useState<string | null>(null);
   const [notesValue, setNotesValue] = useState('');
   const [closing, setClosing] = useState(false);
+  const [instruments, setInstruments] = useState<Instrument[]>([]);
+  const [selectedInstrument, setSelectedInstrument] = useState<string>('');
+  const [autotrading, setAutotrading] = useState(false);
+  const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>({
+    analyzing: false,
+    setupFound: false,
+    conditions: [],
+    timeframe: '2m',
+  });
+  const [totalPnl, setTotalPnl] = useState(0);
+  const monitoringIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const analysisIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const tickSubscriptionRef = useRef<(() => void) | null>(null);
+  const [currentPrice, setCurrentPrice] = useState<number | null>(null);
+  const [entryZoneReached, setEntryZoneReached] = useState(false);
+  const [lotSize, setLotSize] = useState<number>(1); // Minimum lot size (stake amount) for Deriv contracts
+  const [numberOfPositions, setNumberOfPositions] = useState<number>(1);
 
   useEffect(() => {
     loadAccounts();
     loadTrades();
-    loadDerivApiAccounts(); // Always call, no auth check
+    loadInstruments();
     
     // Set up interval to refresh trades every 10 seconds
     const interval = setInterval(() => {
       loadTrades();
     }, 10000);
+
+    // Set up interval to refresh account balances every 60 seconds
+    const balanceInterval = setInterval(() => {
+      loadAccounts();
+    }, 60000);
 
     // Set up interval to call monitor endpoint every 30 seconds
     const monitorInterval = setInterval(() => {
@@ -85,42 +118,33 @@ export default function SmartTradePage() {
 
     return () => {
       clearInterval(interval);
+      clearInterval(balanceInterval);
       clearInterval(monitorInterval);
+      if (monitoringIntervalRef.current) clearInterval(monitoringIntervalRef.current);
+      if (analysisIntervalRef.current) clearInterval(analysisIntervalRef.current);
+      stopRealTimeMonitoring();
     };
   }, []);
 
-  const loadAccounts = async () => {
-    try {
-      const response = await fetch('/api/deriv/auth');
-      const data = await response.json();
-      if (data.success && data.accounts && data.accounts.length > 0) {
-        setAccounts(data.accounts);
-        const selected = data.accounts.find((acc: DerivAccount) => acc.is_selected);
-        setSelectedAccount(selected || data.accounts[0]);
-      }
-    } catch (error) {
-      console.error('Error loading accounts:', error);
+  useEffect(() => {
+    if (autotrading && selectedInstrument && selectedDerivAccount) {
+      startAnalysis();
+    } else {
+      stopAnalysis();
     }
-  };
+  }, [autotrading, selectedInstrument, selectedDerivAccount]);
 
-  const loadDerivApiAccounts = async () => {
+  const loadAccounts = async () => {
     try {
       setLoadingDerivAccounts(true);
       setDerivAccountsError(null);
       
       const response = await fetch('/api/deriv/accounts', {
-        credentials: 'include', // Ensure cookies are sent
+        credentials: 'include',
       });
-      // #region agent log
-      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/smart-trade/page.tsx:112',message:'fetch response received',data:{status:response.status,statusText:response.statusText,ok:response.ok},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
-      // #endregion
       const data = await response.json();
-      // #region agent log
-      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/smart-trade/page.tsx:115',message:'response data parsed',data:{success:data.success,hasError:!!data.error,errorMessage:data.error},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
-      // #endregion
       
       if (!response.ok) {
-        // Handle HTTP errors
         const errorMessage = data.error || `HTTP ${response.status}: ${response.statusText}`;
         console.error('Error loading Deriv API accounts:', errorMessage);
         setDerivApiAccounts([]);
@@ -131,9 +155,16 @@ export default function SmartTradePage() {
       if (data.success && data.accounts && data.accounts.length > 0) {
         setDerivApiAccounts(data.accounts);
         setDerivAccountsError(null);
-        // Auto-select first account if none selected
         if (!selectedDerivAccount && data.accounts.length > 0) {
           setSelectedDerivAccount(data.accounts[0]);
+        } else if (selectedDerivAccount) {
+          // Update selected account with latest data (including balance)
+          const updatedAccount = data.accounts.find(
+            (acc: DerivApiAccount) => acc.account_id === selectedDerivAccount.account_id
+          );
+          if (updatedAccount) {
+            setSelectedDerivAccount(updatedAccount);
+          }
         }
       } else if (data.error) {
         console.error('Error loading Deriv API accounts:', data.error);
@@ -150,33 +181,31 @@ export default function SmartTradePage() {
     }
   };
 
-  const handleSelectAccount = async (accountId: string) => {
+  const loadInstruments = async () => {
     try {
-      const response = await fetch('/api/deriv/auth', {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ account_id: accountId }),
-      });
-
+      const response = await fetch('/api/instruments');
       const data = await response.json();
-      if (data.success) {
-        await loadAccounts();
+      if (data.success && data.instruments) {
+        setInstruments(data.instruments);
+        if (data.instruments.length > 0 && !selectedInstrument) {
+          setSelectedInstrument(data.instruments[0].symbol);
+        }
       }
     } catch (error) {
-      console.error('Error selecting account:', error);
+      console.error('Error loading instruments:', error);
     }
   };
 
   const loadTrades = async () => {
     try {
       setLoading(true);
-      const status = activeTab === 'all' ? 'all' : activeTab;
+      const status = activeTab === 'all' ? 'all' : activeTab === 'history' ? 'all' : activeTab;
       const response = await fetch(`/api/trades?status=${status}`);
       const data = await response.json();
       if (data.success) {
         setTrades(data.trades || []);
+        const total = (data.trades || []).reduce((sum: number, trade: Trade) => sum + (trade.pnl || 0), 0);
+        setTotalPnl(total);
       }
     } catch (error) {
       console.error('Error loading trades:', error);
@@ -189,6 +218,306 @@ export default function SmartTradePage() {
     loadTrades();
   }, [activeTab]);
 
+  const startAnalysis = () => {
+    if (analysisIntervalRef.current) clearInterval(analysisIntervalRef.current);
+    
+    // Start analyzing immediately
+    analyzeAndFindSetup();
+    
+    // Then analyze every 2 minutes (120 seconds)
+    analysisIntervalRef.current = setInterval(() => {
+      analyzeAndFindSetup();
+    }, 120000);
+  };
+
+  const stopAnalysis = () => {
+    if (analysisIntervalRef.current) {
+      clearInterval(analysisIntervalRef.current);
+      analysisIntervalRef.current = null;
+    }
+    stopRealTimeMonitoring();
+    setAnalysisStatus({
+      analyzing: false,
+      setupFound: false,
+      conditions: [],
+      timeframe: analysisStatus.timeframe,
+    });
+  };
+
+  const analyzeAndFindSetup = async () => {
+    if (!selectedInstrument) return;
+    
+    setAnalysisStatus(prev => ({ ...prev, analyzing: true }));
+    
+    try {
+      // Create simplified conditions for setup detection
+      // In a real implementation, this would call the analysis API
+      const conditions: SetupCondition[] = [
+        { id: '1', label: 'Price action aligned with bias', met: false },
+        { id: '2', label: 'Liquidity sweep confirmed', met: false },
+        { id: '3', label: 'FVG present', met: false },
+        { id: '4', label: 'Entry zone reached', met: false },
+        { id: '5', label: 'Confirmation signal', met: false },
+      ];
+
+      // Simulate analysis - replace with actual API call
+      // For now, we'll use a simplified approach
+      const response = await fetch('/api/analysis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          instrument: selectedInstrument,
+          timeframes: ['2h', '15m', '5m'], // Using existing timeframes for now
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.result) {
+          const result = data.result;
+          
+          // Update conditions based on analysis
+          conditions[0].met = result.final_decision === 'TRADE_SETUP';
+          conditions[1].met = result.timeframe_15m?.liquidity_taken || false;
+          conditions[2].met = result.timeframe_15m?.fvg_present || false;
+          
+          const entryPrice = result.timeframe_5m?.entry_price;
+          const direction = result.timeframe_5m?.direction;
+          
+          // Fetch current price if we have an entry price (for entry zone check)
+          let fetchedPrice = currentPrice;
+          if (entryPrice && !currentPrice && result.final_decision === 'TRADE_SETUP') {
+            try {
+              // Try to get current price from the analysis result or fetch it
+              // The analysis might include current price info, otherwise WebSocket will provide it
+              // For now, we'll rely on WebSocket to provide the price once monitoring starts
+              fetchedPrice = null;
+            } catch (e) {
+              // Ignore price fetch errors, WebSocket will provide it
+            }
+          }
+          
+          // Check if entry zone is reached (within 0.1% of entry price)
+          let isInEntryZone = false;
+          if (entryPrice && (fetchedPrice || currentPrice)) {
+            const price = fetchedPrice || currentPrice;
+            const threshold = entryPrice * 0.001;
+            if (direction === 'long') {
+              isInEntryZone = price! <= entryPrice + threshold && price! >= entryPrice - threshold * 2;
+            } else if (direction === 'short') {
+              isInEntryZone = price! >= entryPrice - threshold && price! <= entryPrice + threshold * 2;
+            } else {
+              isInEntryZone = Math.abs(price! - entryPrice) <= threshold;
+            }
+          }
+          
+          conditions[3].met = isInEntryZone;
+          conditions[4].met = result.timeframe_5m?.trade_signal || false;
+
+          setAnalysisStatus({
+            analyzing: false,
+            setupFound: result.final_decision === 'TRADE_SETUP',
+            conditions,
+            entryPrice,
+            stopLoss: result.timeframe_5m?.stop_price,
+            targetPrice: result.timeframe_5m?.target_price,
+            direction,
+            timeframe: analysisStatus.timeframe,
+          });
+
+          // If setup found with entry price, start real-time monitoring
+          // This ensures we catch entry zone entry even if price isn't there yet
+          if (result.final_decision === 'TRADE_SETUP' && entryPrice && direction) {
+            if (isInEntryZone) {
+              setEntryZoneReached(true);
+            }
+            // Always start monitoring when we have a setup with entry price
+            startRealTimeMonitoring(selectedInstrument, entryPrice, direction, result.timeframe_5m?.stop_price, result.timeframe_5m?.target_price);
+          } else {
+            setEntryZoneReached(false);
+            stopRealTimeMonitoring();
+          }
+
+          // If setup found and all conditions met, create pending trade
+          if (result.final_decision === 'TRADE_SETUP' && result.timeframe_5m?.trade_signal) {
+            await createPendingTrade(result);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error analyzing:', error);
+      setAnalysisStatus(prev => ({ ...prev, analyzing: false }));
+    }
+  };
+
+  // Helper function to check if price is in entry zone
+  const checkEntryZone = (entryPrice: number, currentPrice: number, direction?: 'long' | 'short'): boolean => {
+    if (!currentPrice || !entryPrice) return false;
+    
+    // Consider price in entry zone if within 0.1% of entry price
+    const threshold = entryPrice * 0.001;
+    
+    if (direction === 'long') {
+      // For long, entry zone is around and below entry price
+      return currentPrice <= entryPrice + threshold && currentPrice >= entryPrice - threshold * 2;
+    } else if (direction === 'short') {
+      // For short, entry zone is around and above entry price
+      return currentPrice >= entryPrice - threshold && currentPrice <= entryPrice + threshold * 2;
+    }
+    
+    // If no direction, check if price is close to entry
+    return Math.abs(currentPrice - entryPrice) <= threshold;
+  };
+
+  // Start real-time WebSocket monitoring
+  const startRealTimeMonitoring = (
+    symbol: string,
+    entryPrice: number,
+    direction: 'long' | 'short',
+    stopLoss?: number,
+    targetPrice?: number
+  ) => {
+    // Clean up existing subscription
+    if (tickSubscriptionRef.current) {
+      tickSubscriptionRef.current();
+      tickSubscriptionRef.current = null;
+    }
+
+    console.log(`[WebSocket] Starting real-time price monitoring for ${symbol} - Entry: ${entryPrice}, Direction: ${direction}`);
+    
+    const unsubscribe = subscribeToTicks(symbol, (tick) => {
+      setCurrentPrice(tick.price);
+      
+      // Check if price is now in entry zone
+      const threshold = entryPrice * 0.001;
+      let inEntryZone = false;
+      
+      if (direction === 'long') {
+        inEntryZone = tick.price <= entryPrice + threshold && tick.price >= entryPrice - threshold * 2;
+      } else if (direction === 'short') {
+        inEntryZone = tick.price >= entryPrice - threshold && tick.price <= entryPrice + threshold * 2;
+      }
+      
+      // Update entry zone status
+      if (inEntryZone && !entryZoneReached) {
+        setEntryZoneReached(true);
+        console.log(`[WebSocket] Price entered entry zone: ${tick.price}`);
+      }
+      
+      // Check if entry confirmation has occurred (price breaks through entry)
+      let entryConfirmed = false;
+      if (direction === 'long' && tick.price >= entryPrice) {
+        // Price broke above entry for long
+        entryConfirmed = true;
+        console.log(`[WebSocket] Entry confirmed for LONG: ${tick.price} >= ${entryPrice}`);
+      } else if (direction === 'short' && tick.price <= entryPrice) {
+        // Price broke below entry for short
+        entryConfirmed = true;
+        console.log(`[WebSocket] Entry confirmed for SHORT: ${tick.price} <= ${entryPrice}`);
+      }
+      
+      if (entryConfirmed) {
+        handleEntryConfirmation(symbol, tick.price, direction, entryPrice, stopLoss, targetPrice);
+      }
+    });
+
+    tickSubscriptionRef.current = unsubscribe;
+  };
+
+  // Stop real-time monitoring
+  const stopRealTimeMonitoring = () => {
+    if (tickSubscriptionRef.current) {
+      console.log('[WebSocket] Stopping real-time price monitoring');
+      tickSubscriptionRef.current();
+      tickSubscriptionRef.current = null;
+    }
+    setCurrentPrice(null);
+    setEntryZoneReached(false);
+  };
+
+  // Handle entry confirmation - execute trade immediately
+  const handleEntryConfirmation = async (
+    symbol: string,
+    price: number,
+    direction: 'long' | 'short',
+    entryPrice: number,
+    stopLoss?: number,
+    targetPrice?: number
+  ) => {
+    // Check if we already have a pending trade for this symbol
+    const existingPendingTrade = trades.find(
+      t => t.symbol === symbol && t.status === 'pending'
+    );
+
+    if (existingPendingTrade) {
+      // Trade already exists, monitor endpoint will handle execution
+      console.log('[WebSocket] Pending trade already exists, monitor will handle execution');
+      return;
+    }
+
+    // Execute trade immediately via API
+    try {
+      const response = await fetch('/api/trades/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol,
+          direction,
+          entry_price: price,
+          stop_loss: stopLoss,
+          target_price: targetPrice,
+          lot_size: lotSize,
+          number_of_positions: numberOfPositions,
+          account_id: selectedDerivAccount?.account_id,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          console.log('[WebSocket] Trade executed successfully');
+          loadTrades();
+          // Stop monitoring since trade is executed
+          stopRealTimeMonitoring();
+        }
+      }
+    } catch (error) {
+      console.error('Error executing trade on entry confirmation:', error);
+    }
+  };
+
+  const createPendingTrade = async (analysisResult: any) => {
+    if (!selectedDerivAccount || !selectedInstrument) return;
+
+    try {
+      const response = await fetch('/api/trades/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: selectedInstrument,
+          setups: [{
+            type: analysisResult.timeframe_5m.direction === 'long' ? 'bullish' : 'bearish',
+            entryZone: analysisResult.timeframe_5m.entry_zone,
+            stopLoss: analysisResult.timeframe_5m.stop_level,
+            target: analysisResult.timeframe_5m.target_zone,
+            trigger: 'Auto-entry on confirmation',
+          }],
+          lot_size: lotSize,
+          number_of_positions: numberOfPositions,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          loadTrades();
+        }
+      }
+    } catch (error) {
+      console.error('Error creating trade:', error);
+    }
+  };
+
   const handleCloseTrades = async (filter?: 'losing' | 'profitable') => {
     if (!confirm(`Are you sure you want to close ${filter ? filter : 'all'} trades?`)) {
       return;
@@ -198,9 +527,7 @@ export default function SmartTradePage() {
     try {
       const response = await fetch('/api/trades/close', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ filter }),
       });
 
@@ -223,9 +550,7 @@ export default function SmartTradePage() {
     try {
       const response = await fetch('/api/trades', {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           trade_id: tradeId,
           action: 'update_notes',
@@ -247,32 +572,25 @@ export default function SmartTradePage() {
     }
   };
 
-  const calculateTotalPnl = () => {
-    return trades.reduce((sum, trade) => sum + (trade.pnl || 0), 0);
+  const handleStopAutotrading = () => {
+    setAutotrading(false);
   };
 
   const activeTrades = trades.filter(t => t.status === 'active' || t.status === 'pending');
   const closedTrades = trades.filter(t => t.status === 'closed');
-  const displayedTrades = activeTab === 'active' ? activeTrades : activeTab === 'closed' ? closedTrades : trades;
+  const displayedTrades = activeTab === 'active' ? activeTrades : activeTab === 'closed' ? closedTrades : activeTab === 'history' ? trades : trades;
 
   return (
-    <div className="min-h-screen bg-gray-900 p-4 sm:p-8">
-      <div className="max-w-7xl mx-auto">
+    <div className="min-h-screen bg-gray-900 pb-24">
+      <div className="max-w-7xl mx-auto p-4 sm:p-8">
         <div className="mb-6">
           <h1 className="text-3xl font-bold text-white mb-4">Smart Trade</h1>
           
-          {/* Deriv API Accounts Selector */}
+          {/* Account Selector - At the top */}
           <div className="mb-6 bg-gray-800 rounded-lg p-4 border border-gray-700">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-lg font-semibold text-white">Deriv API Accounts</h2>
-              <button
-                onClick={loadDerivApiAccounts}
-                disabled={loadingDerivAccounts}
-                className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded transition disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {loadingDerivAccounts ? 'Loading...' : 'Refresh'}
-              </button>
-            </div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Select Deriv Account (Real/Demo)
+            </label>
             {loadingDerivAccounts ? (
               <div className="text-center py-4">
                 <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-white mx-auto"></div>
@@ -284,163 +602,271 @@ export default function SmartTradePage() {
                   <div className="bg-red-900/20 border border-red-700 rounded p-3">
                     <p className="text-red-400 font-medium mb-1">Error loading accounts</p>
                     <p className="text-red-300 text-xs">{derivAccountsError}</p>
-                    {derivAccountsError.includes('log in') || derivAccountsError.includes('Authentication') ? (
-                      <p className="text-red-300 text-xs mt-2">
-                        Please refresh the page or log in again.
-                      </p>
-                    ) : derivAccountsError.includes('No active Deriv account') ? (
-                      <p className="text-red-300 text-xs mt-2">
-                        Go to Settings to add your Deriv account credentials.
-                      </p>
-                    ) : null}
                   </div>
                 ) : (
-                  <>
-                    <p>No accounts found.</p>
-                    <p className="mt-1 text-xs">Make sure you're logged in and have added a Deriv account in Settings.</p>
-                  </>
+                  <p>No accounts found. Please add a Deriv account in Settings.</p>
                 )}
               </div>
             ) : (
-              <div className="space-y-3">
-                <div className="flex flex-wrap gap-2">
-                  {derivApiAccounts.map((account) => (
-                    <button
-                      key={account.account_id}
-                      onClick={() => setSelectedDerivAccount(account)}
-                      className={`px-4 py-2 rounded-lg font-medium transition text-sm ${
-                        selectedDerivAccount?.account_id === account.account_id
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                      }`}
-                    >
-                      {account.account_id}
-                      {selectedDerivAccount?.account_id === account.account_id && (
-                        <span className="ml-2 text-xs">✓</span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-                {selectedDerivAccount && (
-                  <div className="mt-3 p-3 bg-gray-700 rounded-lg">
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                      <div>
-                        <span className="text-gray-400">Account ID:</span>
-                        <span className="text-white font-medium ml-2 block">{selectedDerivAccount.account_id}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-400">Balance:</span>
-                        <span className="text-white font-medium ml-2 block">
-                          {selectedDerivAccount.balance !== undefined 
-                            ? `${selectedDerivAccount.balance.toFixed(2)} ${selectedDerivAccount.currency || 'USD'}`
-                            : 'N/A'}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-gray-400">Type:</span>
-                        <span className="text-white font-medium ml-2 block">
-                          {selectedDerivAccount.is_virtual ? 'Demo' : 'Real'}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-gray-400">Company:</span>
-                        <span className="text-white font-medium ml-2 block">
-                          {selectedDerivAccount.landing_company_shortcode || 'N/A'}
-                        </span>
-                      </div>
-                    </div>
-                    {selectedDerivAccount.email && (
-                      <div className="mt-2 text-sm">
-                        <span className="text-gray-400">Email:</span>
-                        <span className="text-white ml-2">{selectedDerivAccount.email}</span>
-                      </div>
-                    )}
+              <select
+                value={selectedDerivAccount?.account_id || ''}
+                onChange={(e) => {
+                  const account = derivApiAccounts.find(acc => acc.account_id === e.target.value);
+                  setSelectedDerivAccount(account || null);
+                  // Refresh balances when account is selected
+                  if (account) {
+                    loadAccounts();
+                  }
+                }}
+                className="w-full bg-gray-700 text-white border border-gray-600 rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {[...derivApiAccounts]
+                  .sort((a, b) => {
+                    // Sort: Real accounts first, then Demo
+                    if (a.is_virtual !== b.is_virtual) {
+                      return (a.is_virtual || 0) - (b.is_virtual || 0);
+                    }
+                    // Then sort by balance (descending)
+                    const balanceA = a.balance || 0;
+                    const balanceB = b.balance || 0;
+                    return balanceB - balanceA;
+                  })
+                  .map((account) => {
+                    const balanceText = account.balance !== undefined && account.balance !== null
+                      ? `${account.balance.toFixed(2)} ${account.currency || 'USD'}`
+                      : 'N/A';
+                    const accountType = account.is_virtual ? 'Demo' : 'Real';
+                    return (
+                      <option key={account.account_id} value={account.account_id}>
+                        {balanceText} - {account.account_id} ({accountType})
+                      </option>
+                    );
+                  })}
+              </select>
+            )}
+            {selectedDerivAccount && (
+              <div className="mt-3 p-3 bg-gray-700 rounded-lg text-sm">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div>
+                    <span className="text-gray-400">Balance:</span>
+                    <span className="text-white font-medium ml-2 block">
+                      {selectedDerivAccount.balance !== undefined 
+                        ? `${selectedDerivAccount.balance.toFixed(2)} ${selectedDerivAccount.currency || 'USD'}`
+                        : 'N/A'}
+                    </span>
                   </div>
-                )}
+                  <div>
+                    <span className="text-gray-400">Type:</span>
+                    <span className="text-white font-medium ml-2 block">
+                      {selectedDerivAccount.is_virtual ? 'Demo' : 'Real'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-gray-400">Company:</span>
+                    <span className="text-white font-medium ml-2 block">
+                      {selectedDerivAccount.landing_company_shortcode || 'N/A'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-gray-400">Total PNL:</span>
+                    <span className={`font-medium ml-2 block ${totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {totalPnl.toFixed(2)} {selectedDerivAccount.currency || 'USD'}
+                    </span>
+                  </div>
+                </div>
               </div>
             )}
           </div>
 
-          {/* Stored Account Selector (for backward compatibility) */}
-          {accounts.length > 0 && (
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Stored Trading Accounts
-              </label>
-              <div className="flex flex-wrap gap-2">
-                {accounts.map((account) => (
+          {/* Instrument Selector and Autotrading Controls */}
+          <div className="mb-6 bg-gray-800 rounded-lg p-4 border border-gray-700">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Select Instrument
+                </label>
+                <select
+                  value={selectedInstrument}
+                  onChange={(e) => setSelectedInstrument(e.target.value)}
+                  disabled={autotrading}
+                  className="w-full bg-gray-700 text-white border border-gray-600 rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                >
+                  {instruments.map((inst) => (
+                    <option key={inst.symbol} value={inst.symbol}>
+                      {inst.display_name || inst.symbol}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Timeframe (Analysis)
+                </label>
+                <select
+                  value={analysisStatus.timeframe}
+                  onChange={(e) => setAnalysisStatus(prev => ({ ...prev, timeframe: e.target.value }))}
+                  disabled={autotrading}
+                  className="w-full bg-gray-700 text-white border border-gray-600 rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                >
+                  <option value="2m">2 Minutes</option>
+                  <option value="5m">5 Minutes</option>
+                  <option value="15m">15 Minutes</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Lot Size (Stake)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  step="0.01"
+                  value={lotSize}
+                  onChange={(e) => {
+                    const value = parseFloat(e.target.value);
+                    if (!isNaN(value) && value >= 1) {
+                      setLotSize(value);
+                    }
+                  }}
+                  disabled={autotrading}
+                  className="w-full bg-gray-700 text-white border border-gray-600 rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                  placeholder="1"
+                />
+                <p className="text-xs text-gray-400 mt-1">Minimum: 1</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Number of Positions
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={numberOfPositions}
+                  onChange={(e) => {
+                    const value = parseInt(e.target.value);
+                    if (!isNaN(value) && value >= 1) {
+                      setNumberOfPositions(value);
+                    }
+                  }}
+                  disabled={autotrading}
+                  className="w-full bg-gray-700 text-white border border-gray-600 rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                  placeholder="1"
+                />
+              </div>
+              <div className="flex gap-2">
+                {!autotrading ? (
                   <button
-                    key={account.id}
-                    onClick={() => handleSelectAccount(account.id)}
-                    className={`px-4 py-2 rounded-lg font-medium transition ${
-                      account.is_selected
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                    }`}
+                    onClick={() => setAutotrading(true)}
+                    disabled={!selectedInstrument || !selectedDerivAccount || lotSize < 1 || numberOfPositions < 1}
+                    className="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition"
                   >
-                    {account.account_name}
-                    {account.is_selected && (
-                      <span className="ml-2 text-xs">✓</span>
-                    )}
+                    Start Autotrading
                   </button>
-                ))}
+                ) : (
+                  <button
+                    onClick={handleStopAutotrading}
+                    className="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-lg transition"
+                  >
+                    Stop Autotrading
+                  </button>
+                )}
               </div>
             </div>
-          )}
+          </div>
 
-          {/* Show message if no stored accounts and no Deriv API accounts */}
-          {accounts.length === 0 && derivApiAccounts.length === 0 && !loadingDerivAccounts && (
-            <div className="mb-6 bg-yellow-900/20 border border-yellow-700 rounded-lg p-4">
-              <h3 className="text-yellow-400 font-semibold mb-2">Setup Required</h3>
-              <p className="text-gray-300 text-sm mb-3">
-                To view your Deriv accounts, you need to:
-              </p>
-              <ol className="text-gray-300 text-sm list-decimal list-inside space-y-1 mb-3">
-                <li>Make sure you're logged in</li>
-                <li>Add a Deriv account in Settings with your login credentials</li>
-              </ol>
-              <button
-                onClick={() => router.push('/settings')}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition text-sm"
-              >
-                Go to Settings
-              </button>
-            </div>
-          )}
-
-          {selectedAccount && (
-            <div className="flex flex-wrap items-center gap-4 text-sm text-gray-400 bg-gray-800 rounded-lg p-4">
-              <span>
-                Account: <span className="text-white font-medium">{selectedAccount.account_name}</span>
-              </span>
-              <span>
-                Type: <span className="text-white font-medium">{selectedAccount.account_type.toUpperCase()}</span>
-              </span>
-              <span>
-                Broker: <span className="text-white font-medium">{selectedAccount.broker}</span>
-              </span>
-              <span>
-                Server: <span className="text-white font-medium">{selectedAccount.server}</span>
-              </span>
-              {selectedAccount.balance !== null && (
-                <span>
-                  Balance: <span className="text-white font-medium">{selectedAccount.balance.toFixed(2)} {selectedAccount.currency}</span>
-                </span>
+          {/* Setup Analysis Status */}
+          {autotrading && (
+            <div className="mb-6 bg-gray-800 rounded-lg p-4 border border-gray-700">
+              <h3 className="text-lg font-semibold text-white mb-3">Setup Analysis</h3>
+              {analysisStatus.analyzing ? (
+                <div className="flex items-center gap-3">
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-400"></div>
+                  <span className="text-gray-300">Analyzing {selectedInstrument} on {analysisStatus.timeframe} timeframe...</span>
+                </div>
+              ) : analysisStatus.setupFound ? (
+                <div>
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-green-400 font-semibold">✓ Setup Found!</span>
+                    {analysisStatus.direction && (
+                      <span className={`px-2 py-1 rounded text-xs font-medium ${
+                        analysisStatus.direction === 'long' ? 'bg-green-600' : 'bg-red-600'
+                      } text-white`}>
+                        {analysisStatus.direction.toUpperCase()}
+                      </span>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    {analysisStatus.conditions.map((condition) => (
+                      <div key={condition.id} className="flex items-center gap-2">
+                        <span className={condition.met ? 'text-green-400' : 'text-gray-500'}>
+                          {condition.met ? '✓' : '○'}
+                        </span>
+                        <span className={condition.met ? 'text-white' : 'text-gray-400'}>
+                          {condition.label}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  {analysisStatus.entryPrice && (
+                    <div className="mt-3 pt-3 border-t border-gray-700 grid grid-cols-3 gap-3 text-sm">
+                      <div>
+                        <span className="text-gray-400">Entry:</span>
+                        <span className="text-white ml-2">{analysisStatus.entryPrice.toFixed(5)}</span>
+                      </div>
+                      {analysisStatus.stopLoss && (
+                        <div>
+                          <span className="text-gray-400">Stop Loss:</span>
+                          <span className="text-white ml-2">{analysisStatus.stopLoss.toFixed(5)}</span>
+                        </div>
+                      )}
+                      {analysisStatus.targetPrice && (
+                        <div>
+                          <span className="text-gray-400">Target:</span>
+                          <span className="text-white ml-2">{analysisStatus.targetPrice.toFixed(5)}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {/* Live Monitoring Status */}
+                  {entryZoneReached && currentPrice && (
+                    <div className="mt-3 p-3 bg-blue-900/20 border border-blue-700 rounded-lg">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                          <span className="text-blue-400 font-semibold">Live Monitoring Active</span>
+                        </div>
+                        <span className="text-white font-medium">Current Price: {currentPrice.toFixed(5)}</span>
+                      </div>
+                      <p className="text-blue-300 text-sm mt-1">
+                        Waiting for entry confirmation at {analysisStatus.entryPrice?.toFixed(5)}...
+                      </p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <span className="text-gray-400">Waiting for setup...</span>
+                  <div className="space-y-2">
+                    {analysisStatus.conditions.map((condition) => (
+                      <div key={condition.id} className="flex items-center gap-2">
+                        <span className="text-gray-500">○</span>
+                        <span className="text-gray-400">{condition.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
-              <span>
-                Total PNL: <span className={`font-medium ${calculateTotalPnl() >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  {calculateTotalPnl().toFixed(2)} {selectedAccount.currency}
-                </span>
-              </span>
             </div>
           )}
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-2 mb-4 border-b border-gray-700">
+        <div className="flex gap-2 mb-4 border-b border-gray-700 overflow-x-auto">
           <button
             onClick={() => setActiveTab('active')}
-            className={`px-4 py-2 font-medium transition ${
+            className={`px-4 py-2 font-medium transition whitespace-nowrap ${
               activeTab === 'active'
                 ? 'text-blue-400 border-b-2 border-blue-400'
                 : 'text-gray-400 hover:text-gray-300'
@@ -450,7 +876,7 @@ export default function SmartTradePage() {
           </button>
           <button
             onClick={() => setActiveTab('closed')}
-            className={`px-4 py-2 font-medium transition ${
+            className={`px-4 py-2 font-medium transition whitespace-nowrap ${
               activeTab === 'closed'
                 ? 'text-blue-400 border-b-2 border-blue-400'
                 : 'text-gray-400 hover:text-gray-300'
@@ -460,7 +886,7 @@ export default function SmartTradePage() {
           </button>
           <button
             onClick={() => setActiveTab('all')}
-            className={`px-4 py-2 font-medium transition ${
+            className={`px-4 py-2 font-medium transition whitespace-nowrap ${
               activeTab === 'all'
                 ? 'text-blue-400 border-b-2 border-blue-400'
                 : 'text-gray-400 hover:text-gray-300'
@@ -468,34 +894,17 @@ export default function SmartTradePage() {
           >
             All ({trades.length})
           </button>
+          <button
+            onClick={() => setActiveTab('history')}
+            className={`px-4 py-2 font-medium transition whitespace-nowrap ${
+              activeTab === 'history'
+                ? 'text-blue-400 border-b-2 border-blue-400'
+                : 'text-gray-400 hover:text-gray-300'
+            }`}
+          >
+            History
+          </button>
         </div>
-
-        {/* Action Buttons */}
-        {activeTrades.length > 0 && (
-          <div className="flex flex-wrap gap-2 mb-6">
-            <button
-              onClick={() => handleCloseTrades()}
-              disabled={closing}
-              className="bg-red-600 hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition text-sm"
-            >
-              Close All
-            </button>
-            <button
-              onClick={() => handleCloseTrades('losing')}
-              disabled={closing}
-              className="bg-orange-600 hover:bg-orange-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition text-sm"
-            >
-              Close All Losing
-            </button>
-            <button
-              onClick={() => handleCloseTrades('profitable')}
-              disabled={closing}
-              className="bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition text-sm"
-            >
-              Close All Profitable
-            </button>
-          </div>
-        )}
 
         {/* Trades List */}
         {loading ? (
@@ -547,9 +956,12 @@ export default function SmartTradePage() {
                         >
                           {trade.status.toUpperCase()}
                         </span>
+                        {trade.contract_id && (
+                          <span className="text-xs text-gray-400">Contract: {trade.contract_id}</span>
+                        )}
                       </div>
 
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm mb-3">
                         <div>
                           <span className="text-gray-400">Entry:</span>
                           <span className="text-white ml-2 font-medium">{trade.entry_price.toFixed(5)}</span>
@@ -619,7 +1031,7 @@ export default function SmartTradePage() {
                             <textarea
                               value={notesValue}
                               onChange={(e) => setNotesValue(e.target.value)}
-                              placeholder="Add notes about why this trade worked or didn't..."
+                              placeholder="Add notes about this trade..."
                               className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                               rows={3}
                             />
@@ -681,6 +1093,35 @@ export default function SmartTradePage() {
           </div>
         )}
       </div>
+
+      {/* Sticky Footer */}
+      {activeTrades.length > 0 && (
+        <div className="fixed bottom-0 left-0 right-0 bg-gray-800 border-t border-gray-700 p-4 z-50">
+          <div className="max-w-7xl mx-auto flex flex-wrap gap-2 justify-center">
+            <button
+              onClick={() => handleCloseTrades()}
+              disabled={closing}
+              className="bg-red-600 hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition text-sm"
+            >
+              Close All Trades
+            </button>
+            <button
+              onClick={() => handleCloseTrades('losing')}
+              disabled={closing}
+              className="bg-orange-600 hover:bg-orange-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition text-sm"
+            >
+              Close All Losing Trades
+            </button>
+            <button
+              onClick={() => handleCloseTrades('profitable')}
+              disabled={closing}
+              className="bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition text-sm"
+            >
+              Close All Winning Trades
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
