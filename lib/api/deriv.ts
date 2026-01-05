@@ -11,6 +11,9 @@ const DERIV_API_KEY = process.env.DERIV_API_KEY || '25hYKarkuJw1gis';
 let wsConnection: WebSocket | null = null;
 let wsReady = false;
 let wsAuthToken: string | null = null;
+let isConnecting = false;
+let connectionRetries = 0;
+const MAX_RETRIES = 3;
 const pendingRequests = new Map<number, { resolve: (value: any) => void; reject: (error: any) => void }>();
 let requestId = 1;
 
@@ -216,17 +219,41 @@ async function findCorrectSymbol(searchSymbol: string): Promise<string | null> {
 }
 
 /**
- * Initialize WebSocket connection
+ * Initialize WebSocket connection with retry logic
  */
 async function initializeConnection(): Promise<WebSocket> {
+  // Check if connection is already open and ready
   if (wsConnection && wsReady && wsConnection.readyState === WebSocket.OPEN) {
     return wsConnection;
+  }
+
+  // If already connecting, wait for it
+  if (isConnecting) {
+    return new Promise((resolve, reject) => {
+      const checkInterval = setInterval(() => {
+        if (wsConnection && wsReady && wsConnection.readyState === WebSocket.OPEN) {
+          clearInterval(checkInterval);
+          resolve(wsConnection);
+        } else if (!isConnecting) {
+          clearInterval(checkInterval);
+          reject(new Error('Connection attempt failed'));
+        }
+      }, 100);
+      
+      setTimeout(() => {
+        clearInterval(checkInterval);
+        reject(new Error('Connection wait timeout'));
+      }, 15000);
+    });
   }
 
   // Close existing connection if it exists but is not ready
   if (wsConnection) {
     try {
-      wsConnection.close();
+      wsConnection.removeAllListeners();
+      if (wsConnection.readyState === WebSocket.OPEN || wsConnection.readyState === WebSocket.CONNECTING) {
+        wsConnection.close();
+      }
     } catch (e) {
       // Ignore errors when closing
     }
@@ -234,38 +261,71 @@ async function initializeConnection(): Promise<WebSocket> {
     wsReady = false;
   }
 
+  isConnecting = true;
+  connectionRetries++;
+
   return new Promise((resolve, reject) => {
-    console.log(`[INFO] Connecting to Deriv WebSocket: ${DERIV_WS_URL}?app_id=${DERIV_APP_ID}`);
+    console.log(`[INFO] Connecting to Deriv WebSocket (attempt ${connectionRetries}): ${DERIV_WS_URL}?app_id=${DERIV_APP_ID}`);
     const ws = new WebSocket(`${DERIV_WS_URL}?app_id=${DERIV_APP_ID}`);
 
     const connectionTimeout = setTimeout(() => {
       if (!wsReady) {
-        ws.close();
-        reject(new Error('WebSocket connection timeout after 10 seconds'));
+        isConnecting = false;
+        try {
+          ws.close();
+        } catch (e) {
+          // Ignore
+        }
+        wsConnection = null;
+        wsReady = false;
+        
+        if (connectionRetries < MAX_RETRIES) {
+          console.log(`[INFO] Connection timeout, retrying (${connectionRetries}/${MAX_RETRIES})...`);
+          setTimeout(() => {
+            initializeConnection().then(resolve).catch(reject);
+          }, 1000 * connectionRetries);
+        } else {
+          connectionRetries = 0;
+          reject(new Error('WebSocket connection timeout after multiple retries'));
+        }
       }
-    }, 10000);
+    }, 15000); // Increased timeout to 15 seconds
 
     ws.on('open', () => {
       console.log('[INFO] Deriv WebSocket connected');
       clearTimeout(connectionTimeout);
       wsConnection = ws;
-      wsReady = true;
+      connectionRetries = 0; // Reset retry counter on success
 
       // Authorize if we have an API key
       if (DERIV_API_KEY) {
         authorizeConnection(ws, DERIV_API_KEY)
           .then(() => {
-            console.log('[INFO] WebSocket connection ready');
+            wsReady = true;
+            isConnecting = false;
+            console.log('[INFO] WebSocket connection ready and authorized');
             resolve(ws);
           })
           .catch((authError) => {
             console.error('[ERROR] Authorization failed:', authError);
+            isConnecting = false;
             wsConnection = null;
             wsReady = false;
-            reject(authError);
+            
+            if (connectionRetries < MAX_RETRIES) {
+              console.log(`[INFO] Authorization failed, retrying connection (${connectionRetries}/${MAX_RETRIES})...`);
+              setTimeout(() => {
+                initializeConnection().then(resolve).catch(reject);
+              }, 1000 * connectionRetries);
+            } else {
+              connectionRetries = 0;
+              reject(authError);
+            }
           });
       } else {
         // No auth needed for public endpoints
+        wsReady = true;
+        isConnecting = false;
         console.log('[INFO] WebSocket connection ready (no auth)');
         resolve(ws);
       }
@@ -283,16 +343,39 @@ async function initializeConnection(): Promise<WebSocket> {
     ws.on('error', (error) => {
       console.error('[ERROR] Deriv WebSocket error:', error);
       clearTimeout(connectionTimeout);
-      wsConnection = null;
-      wsReady = false;
-      reject(error);
+      isConnecting = false;
+      
+      if (connectionRetries < MAX_RETRIES) {
+        console.log(`[INFO] WebSocket error, retrying (${connectionRetries}/${MAX_RETRIES})...`);
+        wsConnection = null;
+        wsReady = false;
+        setTimeout(() => {
+          initializeConnection().then(resolve).catch(reject);
+        }, 1000 * connectionRetries);
+      } else {
+        connectionRetries = 0;
+        wsConnection = null;
+        wsReady = false;
+        reject(error);
+      }
     });
 
     ws.on('close', (code, reason) => {
       console.log(`[INFO] Deriv WebSocket closed: code=${code}, reason=${reason.toString()}`);
       clearTimeout(connectionTimeout);
+      isConnecting = false;
       wsConnection = null;
       wsReady = false;
+      
+      // If connection was closed unexpectedly, mark for reconnection
+      if (code !== 1000 && pendingRequests.size > 0) {
+        console.log('[WARN] Connection closed unexpectedly, pending requests will fail');
+        // Reject all pending requests
+        pendingRequests.forEach(({ reject: rejectRequest }) => {
+          rejectRequest(new Error('WebSocket connection closed unexpectedly'));
+        });
+        pendingRequests.clear();
+      }
     });
   });
 }
@@ -347,46 +430,90 @@ function handleMessage(message: any) {
 }
 
 /**
- * Send WebSocket request and wait for response
+ * Send WebSocket request and wait for response with retry logic
  */
-async function sendRequest(request: any, timeoutMs: number = 10000): Promise<any> {
-  try {
-    const ws = await initializeConnection();
-    const reqId = requestId++;
-    const fullRequest = { ...request, req_id: reqId };
-
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        pendingRequests.delete(reqId);
-        reject(new Error(`Request timeout after ${timeoutMs}ms`));
-      }, timeoutMs);
-
-      pendingRequests.set(reqId, {
-        resolve: (response: any) => {
-          clearTimeout(timeout);
-          if (response.error) {
-            reject(new Error(response.error.message || 'API request failed'));
-          } else {
-            resolve(response);
-          }
-        },
-        reject: (error: any) => {
-          clearTimeout(timeout);
-          reject(error);
-        },
-      });
+async function sendRequest(request: any, timeoutMs: number = 10000, retries: number = 2): Promise<any> {
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      // Reset connection if it's not ready
+      if (!wsConnection || !wsReady || wsConnection.readyState !== WebSocket.OPEN) {
+        wsConnection = null;
+        wsReady = false;
+        isConnecting = false;
+      }
+      
+      const ws = await initializeConnection();
+      const reqId = requestId++;
+      const fullRequest = { ...request, req_id: reqId };
 
       try {
-        ws.send(JSON.stringify(fullRequest));
-      } catch (sendError: any) {
-        clearTimeout(timeout);
-        pendingRequests.delete(reqId);
-        reject(new Error(`Failed to send request: ${sendError.message}`));
+        const result = await new Promise<any>((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            pendingRequests.delete(reqId);
+            reject(new Error(`Request timeout after ${timeoutMs}ms`));
+          }, timeoutMs);
+
+          pendingRequests.set(reqId, {
+            resolve: (response: any) => {
+              clearTimeout(timeout);
+              if (response.error) {
+                reject(new Error(response.error.message || 'API request failed'));
+              } else {
+                resolve(response);
+              }
+            },
+            reject: (error: any) => {
+              clearTimeout(timeout);
+              reject(error);
+            },
+          });
+
+          try {
+            if (ws.readyState !== WebSocket.OPEN) {
+              throw new Error('WebSocket is not open');
+            }
+            ws.send(JSON.stringify(fullRequest));
+          } catch (sendError: any) {
+            clearTimeout(timeout);
+            pendingRequests.delete(reqId);
+            reject(new Error(`Failed to send request: ${sendError.message}`));
+          }
+        });
+        
+        // Success - return result
+        return result;
+      } catch (requestError: any) {
+        lastError = requestError;
+        // Check if we should retry
+        const shouldRetry = attempt < retries && (
+          requestError.message?.includes('timeout') ||
+          requestError.message?.includes('connection') ||
+          requestError.message?.includes('not open')
+        );
+        
+        if (shouldRetry) {
+          console.log(`[WARN] Request failed, retrying (attempt ${attempt + 1}/${retries + 1}):`, requestError.message);
+          await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+          continue;
+        } else {
+          throw requestError;
+        }
       }
-    });
-  } catch (error: any) {
-    throw new Error(`WebSocket connection failed: ${error.message}`);
+    } catch (error: any) {
+      lastError = new Error(`WebSocket connection failed: ${error.message}`);
+      if (attempt < retries) {
+        console.log(`[WARN] Connection failed, retrying (attempt ${attempt + 1}/${retries + 1}):`, error.message);
+        await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+        continue;
+      } else {
+        throw lastError;
+      }
+    }
   }
+  
+  throw lastError || new Error('Request failed after all retries');
 }
 
 /**

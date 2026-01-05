@@ -77,6 +77,12 @@ export interface SessionMarker {
   label: string;
 }
 
+// Swing Point
+export interface SwingPoint {
+  price: number;
+  time: number;
+}
+
 // 2H Bias Analysis Output
 export interface BiasAnalysis {
   bias: Bias;
@@ -92,6 +98,8 @@ export interface BiasAnalysis {
   order_blocks: OrderBlock[];
   liquidity_pools: LiquidityPool[];
   pd_level: number; // 50% level
+  swing_highs: SwingPoint[];
+  swing_lows: SwingPoint[];
 }
 
 // 15m Liquidity Analysis Output
@@ -109,6 +117,8 @@ export interface LiquidityAnalysis {
   }[];
   fvgs: FVG[];
   displacement: DisplacementData[];
+  swing_highs: SwingPoint[];
+  swing_lows: SwingPoint[];
 }
 
 // 5m Execution Signal Output
@@ -125,6 +135,8 @@ export interface ExecutionSignal {
   stop_price: number | null;
   target_price: number | null;
   risk_reward_ratio: number | null;
+  swing_highs: SwingPoint[];
+  swing_lows: SwingPoint[];
 }
 
 // Complete Analysis Result

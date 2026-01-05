@@ -2,19 +2,11 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
-import { useAuth } from '@/lib/auth/context';
+import { usePathname } from 'next/navigation';
 
 export default function Navigation() {
   const pathname = usePathname();
-  const router = useRouter();
-  const { user, loading, signOut } = useAuth();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-
-  // Don't display navigation on login page
-  if (pathname === '/login') {
-    return null;
-  }
 
   const navItems = [
     { href: '/dashboard', label: 'Dashboard' },
@@ -24,13 +16,6 @@ export default function Navigation() {
     { href: '/logs', label: 'Logs' },
     { href: '/settings', label: 'Settings' },
   ];
-
-  const handleSignOut = async () => {
-    await signOut();
-    router.push('/login');
-    router.refresh();
-    setIsMobileMenuOpen(false);
-  };
 
   const handleLinkClick = () => {
     setIsMobileMenuOpen(false);
@@ -65,30 +50,6 @@ export default function Navigation() {
                 </Link>
               );
             })}
-            {!loading && (
-              <>
-                {user ? (
-                  <div className="flex items-center space-x-3">
-                    <span className="text-sm text-gray-300">
-                      {user.email}
-                    </span>
-                    <button
-                      onClick={handleSignOut}
-                      className="px-3 py-2 rounded-md text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white transition"
-                    >
-                      Sign Out
-                    </button>
-                  </div>
-                ) : (
-                  <Link
-                    href="/login"
-                    className="px-3 py-2 rounded-md text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition"
-                  >
-                    Sign In
-                  </Link>
-                )}
-              </>
-            )}
           </div>
 
           {/* Mobile Hamburger Button */}
@@ -160,31 +121,6 @@ export default function Navigation() {
                 </Link>
               );
             })}
-            {!loading && (
-              <div className="pt-4 pb-3 border-t border-gray-700">
-                {user ? (
-                  <div className="px-3 space-y-3">
-                    <div className="text-base font-medium text-white">
-                      {user.email}
-                    </div>
-                    <button
-                      onClick={handleSignOut}
-                      className="w-full text-left px-3 py-2 rounded-md text-base font-medium text-gray-300 hover:bg-gray-700 hover:text-white transition"
-                    >
-                      Sign Out
-                    </button>
-                  </div>
-                ) : (
-                  <Link
-                    href="/login"
-                    onClick={handleLinkClick}
-                    className="block px-3 py-2 rounded-md text-base font-medium bg-blue-600 hover:bg-blue-700 text-white transition text-center"
-                  >
-                    Sign In
-                  </Link>
-                )}
-              </div>
-            )}
           </div>
         </div>
       )}

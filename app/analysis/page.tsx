@@ -9,7 +9,6 @@ import ClickablePrice from '@/components/ui/ClickablePrice';
 import { AnalysisResult, TimeframeData, ChartDrawingData } from '@/types/analysis';
 import { formatPrice, formatPriceRange, formatPriceArray } from '@/lib/utils/price-format';
 import { detectSupportResistance, SupportResistanceLevel } from '@/lib/ict/support-resistance';
-import { useAuth } from '@/lib/auth/context';
 
 // JSON Viewer Component
 function JSONViewer({ data }: { data: any }) {
@@ -165,7 +164,6 @@ export default function AnalysisPage() {
   const searchParams = useSearchParams();
   const runId = searchParams.get('run_id');
   const router = useRouter();
-  const { user, loading: authLoading } = useAuth();
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [chartData, setChartData] = useState<Record<string, TimeframeData[]>>({});
@@ -176,13 +174,6 @@ export default function AnalysisPage() {
   const [addingToWatchlist, setAddingToWatchlist] = useState(false);
   const [watchlistStatus, setWatchlistStatus] = useState<'idle' | 'added' | 'updated'>('idle');
 
-  // Redirect to login if not authenticated
-  useEffect(() => {
-    if (!authLoading && !user) {
-      const redirectPath = runId ? `/analysis?run_id=${runId}` : '/analysis';
-      router.push(`/login?redirect=${encodeURIComponent(redirectPath)}`);
-    }
-  }, [user, authLoading, router, runId]);
 
   // Disable scroll restoration on mount
   useEffect(() => {
@@ -477,8 +468,8 @@ export default function AnalysisPage() {
   };
 
   const addToWatchlist = async () => {
-    if (!analysis || !user?.id) {
-      alert('Please log in to add instruments to your watchlist');
+    if (!analysis) {
+      alert('No analysis available');
       return;
     }
 
@@ -490,7 +481,6 @@ export default function AnalysisPage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          user_id: user.id,
           instrument: analysis.instrument,
           analysis_run_id: runId || null,
           analysis_data: analysis,
@@ -511,20 +501,6 @@ export default function AnalysisPage() {
       setAddingToWatchlist(false);
     }
   };
-
-  // Show loading while checking auth
-  if (authLoading) {
-    return (
-      <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
-        <div className="text-xl">Loading...</div>
-      </div>
-    );
-  }
-
-  // Don't render if not authenticated (will redirect)
-  if (!user) {
-    return null;
-  }
 
   if (loading) {
     return (
@@ -557,27 +533,25 @@ export default function AnalysisPage() {
             >
               {refreshing ? 'Refreshing...' : 'Refresh Analysis'}
             </button>
-            {user && (
-              <button
-                onClick={addToWatchlist}
-                disabled={addingToWatchlist}
-                className={`font-semibold py-2 px-4 rounded-lg transition text-sm w-full sm:w-auto ${
-                  watchlistStatus === 'added'
-                    ? 'bg-green-600 hover:bg-green-700 text-white'
-                    : watchlistStatus === 'updated'
-                    ? 'bg-yellow-600 hover:bg-yellow-700 text-white'
-                    : 'bg-purple-600 hover:bg-purple-700 text-white disabled:bg-gray-600 disabled:cursor-not-allowed'
-                }`}
-              >
-                {addingToWatchlist
-                  ? 'Adding...'
+            <button
+              onClick={addToWatchlist}
+              disabled={addingToWatchlist}
+              className={`font-semibold py-2 px-4 rounded-lg transition text-sm w-full sm:w-auto ${
+                watchlistStatus === 'added'
+                  ? 'bg-green-600 hover:bg-green-700 text-white'
+                  : watchlistStatus === 'updated'
+                  ? 'bg-yellow-600 hover:bg-yellow-700 text-white'
+                  : 'bg-purple-600 hover:bg-purple-700 text-white disabled:bg-gray-600 disabled:cursor-not-allowed'
+              }`}
+            >
+              {addingToWatchlist
+                ? 'Adding...'
                   : watchlistStatus === 'added'
                   ? '✓ Added to Watchlist'
                   : watchlistStatus === 'updated'
                   ? '✓ Updated in Watchlist'
                   : 'Add to Watchlist'}
               </button>
-            )}
             <Link
               href="/dashboard"
               className="bg-gray-700 hover:bg-gray-600 text-white font-semibold py-2 px-4 rounded-lg transition text-sm text-center w-full sm:w-auto"
@@ -654,6 +628,48 @@ export default function AnalysisPage() {
                 </p>
               </div>
             </div>
+            {/* Swing Highs and Lows */}
+            <div className="mt-4 pt-4 border-t border-gray-700">
+              <h3 className="text-lg font-semibold mb-3">Latest 5 Swing Points</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <p className="text-gray-400 text-sm mb-2">Swing Highs (Most Recent First)</p>
+                  <div className="space-y-1">
+                    {analysis.timeframe_2h.swing_highs && analysis.timeframe_2h.swing_highs.length > 0 ? (
+                      analysis.timeframe_2h.swing_highs.map((swing, idx) => (
+                        <div key={idx} className="flex justify-between items-center text-xs bg-red-900/20 px-2 py-1 rounded">
+                          <span className="text-gray-300">#{idx + 1}</span>
+                          <ClickablePrice price={swing.price} instrument={analysis.instrument} className="text-xs font-medium" />
+                          <span className="text-gray-500 text-xs">
+                            {new Date(swing.time * 1000).toLocaleString()}
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-gray-500 text-xs">No swing highs detected</p>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-gray-400 text-sm mb-2">Swing Lows (Most Recent First)</p>
+                  <div className="space-y-1">
+                    {analysis.timeframe_2h.swing_lows && analysis.timeframe_2h.swing_lows.length > 0 ? (
+                      analysis.timeframe_2h.swing_lows.map((swing, idx) => (
+                        <div key={idx} className="flex justify-between items-center text-xs bg-green-900/20 px-2 py-1 rounded">
+                          <span className="text-gray-300">#{idx + 1}</span>
+                          <ClickablePrice price={swing.price} instrument={analysis.instrument} className="text-xs font-medium" />
+                          <span className="text-gray-500 text-xs">
+                            {new Date(swing.time * 1000).toLocaleString()}
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-gray-500 text-xs">No swing lows detected</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* 15m Analysis */}
@@ -671,6 +687,48 @@ export default function AnalysisPage() {
                 <p className="text-xl font-semibold">
                   {analysis.timeframe_15m.setup_valid ? 'Yes' : 'No'}
                 </p>
+              </div>
+            </div>
+            {/* Swing Highs and Lows */}
+            <div className="mt-4 pt-4 border-t border-gray-700">
+              <h3 className="text-lg font-semibold mb-3">Latest 5 Swing Points</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <p className="text-gray-400 text-sm mb-2">Swing Highs (Most Recent First)</p>
+                  <div className="space-y-1">
+                    {analysis.timeframe_15m.swing_highs && analysis.timeframe_15m.swing_highs.length > 0 ? (
+                      analysis.timeframe_15m.swing_highs.map((swing, idx) => (
+                        <div key={idx} className="flex justify-between items-center text-xs bg-red-900/20 px-2 py-1 rounded">
+                          <span className="text-gray-300">#{idx + 1}</span>
+                          <ClickablePrice price={swing.price} instrument={analysis.instrument} className="text-xs font-medium" />
+                          <span className="text-gray-500 text-xs">
+                            {new Date(swing.time * 1000).toLocaleString()}
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-gray-500 text-xs">No swing highs detected</p>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-gray-400 text-sm mb-2">Swing Lows (Most Recent First)</p>
+                  <div className="space-y-1">
+                    {analysis.timeframe_15m.swing_lows && analysis.timeframe_15m.swing_lows.length > 0 ? (
+                      analysis.timeframe_15m.swing_lows.map((swing, idx) => (
+                        <div key={idx} className="flex justify-between items-center text-xs bg-green-900/20 px-2 py-1 rounded">
+                          <span className="text-gray-300">#{idx + 1}</span>
+                          <ClickablePrice price={swing.price} instrument={analysis.instrument} className="text-xs font-medium" />
+                          <span className="text-gray-500 text-xs">
+                            {new Date(swing.time * 1000).toLocaleString()}
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-gray-500 text-xs">No swing lows detected</p>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -722,6 +780,48 @@ export default function AnalysisPage() {
             ) : (
               <p className="text-gray-400">No trade signal</p>
             )}
+            {/* Swing Highs and Lows */}
+            <div className="mt-4 pt-4 border-t border-gray-700">
+              <h3 className="text-lg font-semibold mb-3">Latest 5 Swing Points</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <p className="text-gray-400 text-sm mb-2">Swing Highs (Most Recent First)</p>
+                  <div className="space-y-1">
+                    {analysis.timeframe_5m.swing_highs && analysis.timeframe_5m.swing_highs.length > 0 ? (
+                      analysis.timeframe_5m.swing_highs.map((swing, idx) => (
+                        <div key={idx} className="flex justify-between items-center text-xs bg-red-900/20 px-2 py-1 rounded">
+                          <span className="text-gray-300">#{idx + 1}</span>
+                          <ClickablePrice price={swing.price} instrument={analysis.instrument} className="text-xs font-medium" />
+                          <span className="text-gray-500 text-xs">
+                            {new Date(swing.time * 1000).toLocaleString()}
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-gray-500 text-xs">No swing highs detected</p>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-gray-400 text-sm mb-2">Swing Lows (Most Recent First)</p>
+                  <div className="space-y-1">
+                    {analysis.timeframe_5m.swing_lows && analysis.timeframe_5m.swing_lows.length > 0 ? (
+                      analysis.timeframe_5m.swing_lows.map((swing, idx) => (
+                        <div key={idx} className="flex justify-between items-center text-xs bg-green-900/20 px-2 py-1 rounded">
+                          <span className="text-gray-300">#{idx + 1}</span>
+                          <ClickablePrice price={swing.price} instrument={analysis.instrument} className="text-xs font-medium" />
+                          <span className="text-gray-500 text-xs">
+                            {new Date(swing.time * 1000).toLocaleString()}
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-gray-500 text-xs">No swing lows detected</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 

@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { formatTimeOnlyWithTimezone } from '@/lib/utils/price-format';
-import { useAuth } from '@/lib/auth/context';
 
 interface Trade {
   id: string;
@@ -56,7 +55,6 @@ interface DerivApiAccount {
 
 export default function SmartTradePage() {
   const router = useRouter();
-  const { user, session, loading: authLoading } = useAuth();
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);
   const [accounts, setAccounts] = useState<DerivAccount[]>([]);
@@ -109,9 +107,6 @@ export default function SmartTradePage() {
     try {
       setLoadingDerivAccounts(true);
       setDerivAccountsError(null);
-      // #region agent log
-      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/smart-trade/page.tsx:108',message:'loadDerivApiAccounts entry',data:{hasUser:!!user,hasSession:!!session,userId:user?.id,authLoading},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'H6'})}).catch(()=>{});
-      // #endregion
       
       const response = await fetch('/api/deriv/accounts', {
         credentials: 'include', // Ensure cookies are sent

@@ -15,6 +15,7 @@ import {
   applyInstrumentRules,
   validateInstrumentAnalysis,
 } from './instruments';
+import { getLatestSwingPoints } from '@/lib/ict/support-resistance';
 
 /**
  * Main analysis function - orchestrates 2H → 15m → 5m analysis
@@ -206,6 +207,9 @@ function createNoTradeResult(
   biasAnalysis: any,
   reason: string
 ): AnalysisResult {
+  const swing15m = getLatestSwingPoints(data['15m'], 5);
+  const swing5m = getLatestSwingPoints(data['5m'], 5);
+
   return {
     instrument,
     timestamp,
@@ -222,6 +226,8 @@ function createNoTradeResult(
       liquidity_sweeps: [],
       fvgs: [],
       displacement: [],
+      swing_highs: swing15m.highs,
+      swing_lows: swing15m.lows,
     },
     timeframe_5m: {
       trade_signal: false,
@@ -236,6 +242,8 @@ function createNoTradeResult(
       stop_price: null,
       target_price: null,
       risk_reward_ratio: null,
+      swing_highs: swing5m.highs,
+      swing_lows: swing5m.lows,
     },
     final_decision: 'NO_TRADE',
     session_valid: false,
@@ -255,6 +263,8 @@ function createWatchResult(
   liquidityAnalysis: any,
   reason: string
 ): AnalysisResult {
+  const swing5m = getLatestSwingPoints(data['5m'], 5);
+
   return {
     instrument,
     timestamp,
@@ -275,6 +285,8 @@ function createWatchResult(
       stop_price: null,
       target_price: null,
       risk_reward_ratio: null,
+      swing_highs: swing5m.highs,
+      swing_lows: swing5m.lows,
     },
     final_decision: 'WATCH',
     session_valid: isValidSessionTime(new Date(), instrument, instrumentConfig.type),

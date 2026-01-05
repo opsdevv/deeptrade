@@ -1,163 +1,163 @@
-// Deriv Account Authentication - Login with credentials
+// Deriv Authentication - Login with username and password
 
 import WebSocket from 'ws';
 
 const DERIV_WS_URL = process.env.DERIV_WS_URL || 'wss://ws.derivws.com/websockets/v3';
-const DERIV_APP_ID = process.env.DERIV_APP_ID || '1089';
+const DERIV_APP_ID = process.env.DERIV_APP_ID || '1089'; // Default test app ID
 
-interface LoginCredentials {
+export interface LoginParams {
   login: string;
   password: string;
-  server: string;
+  server?: string;
 }
 
-interface LoginResponse {
+export interface LoginResult {
   success: boolean;
+  error?: string;
   account_id?: string;
   balance?: number;
   currency?: string;
   email?: string;
-  error?: string;
+  country?: string;
+  landing_company_name?: string;
+  landing_company_shortcode?: string;
 }
 
 /**
- * Login to Deriv account using credentials
+ * Login to Deriv account using username and password
+ * Returns account information if successful
  */
 export async function loginToDerivAccount(
-  credentials: LoginCredentials
-): Promise<LoginResponse> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`${DERIV_WS_URL}?app_id=${DERIV_APP_ID}`);
-    let requestId = 1;
-    const reqId = requestId++;
+  params: LoginParams
+): Promise<LoginResult> {
+  const { login, password, server } = params;
 
-    const timeout = setTimeout(() => {
-      ws.close();
-      reject(new Error('Login timeout'));
-    }, 10000);
+  if (!login || !password) {
+    return {
+      success: false,
+      error: 'Login and password are required',
+    };
+  }
 
-    ws.on('open', () => {
-      // For Deriv, we use the format: "login:password" or just the token
-      // If server is specified, we might need to use it in the connection URL or request
-      const loginRequest = {
-        authorize: `${credentials.login}:${credentials.password}`,
-        req_id: reqId,
+  try {
+    // Create WebSocket connection
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(`${DERIV_WS_URL}?app_id=${DERIV_APP_ID}`);
+    } catch (wsError: any) {
+      return {
+        success: false,
+        error: `Failed to create WebSocket: ${wsError.message}`,
       };
-
-      ws.send(JSON.stringify(loginRequest));
-    });
-
-    ws.on('message', (data: WebSocket.Data) => {
-      try {
-        const message = JSON.parse(data.toString());
-        
-        if (message.req_id === reqId) {
-          clearTimeout(timeout);
-          ws.close();
-
-          if (message.error) {
-            resolve({
-              success: false,
-              error: message.error.message || 'Login failed',
-            });
-          } else if (message.authorize) {
-            const auth = message.authorize;
-            resolve({
-              success: true,
-              account_id: auth.account_id || credentials.login,
-              balance: auth.balance ? parseFloat(auth.balance) : undefined,
-              currency: auth.currency || 'USD',
-              email: auth.email,
-            });
-          } else {
-            resolve({
-              success: false,
-              error: 'Unexpected response format',
-            });
-          }
-        }
-      } catch (error: any) {
-        clearTimeout(timeout);
-        ws.close();
-        reject(new Error(`Failed to parse response: ${error.message}`));
-      }
-    });
-
-    ws.on('error', (error) => {
-      clearTimeout(timeout);
-      reject(new Error(`WebSocket error: ${error.message}`));
-    });
-  });
-}
-
-/**
- * Get account balance and info
- */
-export async function getAccountInfo(authToken: string): Promise<{
-  account_id?: string;
-  balance?: number;
-  currency?: string;
-  email?: string;
-}> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`${DERIV_WS_URL}?app_id=${DERIV_APP_ID}`);
+    }
     let requestId = 1;
     const authReqId = requestId++;
-    const accountInfoReqId = requestId++;
 
-    const timeout = setTimeout(() => {
-      ws.close();
-      reject(new Error('Request timeout'));
-    }, 10000);
-
-    ws.on('open', () => {
-      // First authorize with the auth token
-      ws.send(JSON.stringify({
-        authorize: authToken,
-        req_id: authReqId,
-      }));
-    });
-
-    ws.on('message', (data: WebSocket.Data) => {
-      try {
-        const message = JSON.parse(data.toString());
-        
-        if (message.req_id === authReqId) {
-          if (message.error) {
-            clearTimeout(timeout);
-            ws.close();
-            reject(new Error(message.error.message || 'Authorization failed'));
-          } else if (message.authorize) {
-            // Get account info after successful authorization
-            ws.send(JSON.stringify({
-              get_account_status: 1,
-              req_id: accountInfoReqId,
-            }));
-          }
-        } else if (message.req_id === accountInfoReqId) {
-          clearTimeout(timeout);
+    return new Promise((resolve, reject) => {
+      let isResolved = false;
+      const timeout = setTimeout(() => {
+        if (!isResolved) {
           ws.close();
+          isResolved = true;
+          reject(new Error('Login request timeout'));
+        }
+      }, 15000);
 
-          if (message.error) {
-            reject(new Error(message.error.message || 'Failed to get account info'));
-          } else {
+      ws.on('open', () => {
+        // Format auth token as "login:password"
+        const authToken = `${login}:${password}`;
+        
+        // Send authorize request
+        ws.send(JSON.stringify({
+          authorize: authToken,
+          req_id: authReqId,
+        }));
+      });
+
+      ws.on('message', (data: WebSocket.Data) => {
+        try {
+          const message = JSON.parse(data.toString());
+
+          if (message.req_id === authReqId) {
+            if (isResolved) {
+              return;
+            }
+            clearTimeout(timeout);
+            isResolved = true;
+            ws.close();
+
+            if (message.error) {
+              resolve({
+                success: false,
+                error: message.error.message || 'Authentication failed',
+              });
+            } else if (message.authorize) {
+              const authData = message.authorize;
+              resolve({
+                success: true,
+                account_id: authData.loginid || authData.account_id || login,
+                balance: authData.balance !== undefined && authData.balance !== null 
+                  ? parseFloat(String(authData.balance)) 
+                  : undefined,
+                currency: authData.currency || 'USD',
+                email: authData.email,
+                country: authData.country,
+                landing_company_name: authData.landing_company_name,
+                landing_company_shortcode: authData.landing_company_shortcode,
+              });
+            } else {
+              resolve({
+                success: false,
+                error: 'Unexpected response format',
+              });
+            }
+          }
+        } catch (error: any) {
+          // #region agent log
+          fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv-auth.ts:100',message:'Parse error in message handler',data:{errorMessage:error.message,errorStack:error.stack?.substring(0,200)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
+          // #endregion
+          if (!isResolved) {
+            clearTimeout(timeout);
+            isResolved = true;
+            ws.close();
             resolve({
-              account_id: message.get_account_status?.loginid,
-              balance: message.get_account_status?.balance ? parseFloat(message.get_account_status.balance) : undefined,
-              currency: message.get_account_status?.currency || 'USD',
+              success: false,
+              error: `Failed to parse response: ${error.message}`,
             });
           }
         }
-      } catch (error: any) {
-        clearTimeout(timeout);
-        ws.close();
-        reject(new Error(`Failed to parse response: ${error.message}`));
-      }
-    });
+      });
 
-    ws.on('error', (error) => {
-      clearTimeout(timeout);
-      reject(new Error(`WebSocket error: ${error.message}`));
+      ws.on('error', (error) => {
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv-auth.ts:110',message:'WebSocket error event',data:{errorMessage:error.message,wsReadyState:ws.readyState},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
+        // #endregion
+        if (!isResolved) {
+          clearTimeout(timeout);
+          isResolved = true;
+          resolve({
+            success: false,
+            error: `WebSocket error: ${error.message}`,
+          });
+        }
+      });
+
+      ws.on('close', (code, reason) => {
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv-auth.ts:118',message:'WebSocket close event',data:{code,reason:reason?.toString(),isResolved},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
+        // #endregion
+        if (!isResolved) {
+          clearTimeout(timeout);
+        }
+      });
     });
-  });
+  } catch (error: any) {
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv-auth.ts:122',message:'Outer catch block',data:{errorMessage:error.message,errorStack:error.stack?.substring(0,200)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
+    // #endregion
+    return {
+      success: false,
+      error: `Failed to connect: ${error.message}`,
+    };
+  }
 }

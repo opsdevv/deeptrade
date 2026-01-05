@@ -13,6 +13,7 @@ import { detectMSS, isMSSConfirmed, getLatestMSS } from '@/lib/ict/mss';
 import { detectDisplacement, isStrongDisplacement } from '@/lib/ict/displacement';
 import { isLiquiditySwept } from '@/lib/ict/liquidity';
 import { formatPrice } from '@/lib/utils/price-format';
+import { getLatestSwingPoints } from '@/lib/ict/support-resistance';
 
 /**
  * Analyze 5m timeframe for execution signals
@@ -81,6 +82,9 @@ export function analyze5mExecution(
     fvgDetails !== null &&
     liquidity.setup_valid;
 
+  // Get latest 5 swing highs and lows
+  const swingPoints = getLatestSwingPoints(recentData, 5);
+
   if (!allConditionsMet) {
     return {
       trade_signal: false,
@@ -95,6 +99,8 @@ export function analyze5mExecution(
       stop_price: null,
       target_price: null,
       risk_reward_ratio: null,
+      swing_highs: swingPoints.highs,
+      swing_lows: swingPoints.lows,
     };
   }
 
@@ -115,6 +121,8 @@ export function analyze5mExecution(
       stop_price: null,
       target_price: null,
       risk_reward_ratio: null,
+      swing_highs: swingPoints.highs,
+      swing_lows: swingPoints.lows,
     };
   }
 
@@ -167,6 +175,8 @@ export function analyze5mExecution(
     stop_price: stopPrice,
     target_price: targetPrice,
     risk_reward_ratio: riskRewardRatio,
+    swing_highs: swingPoints.highs,
+    swing_lows: swingPoints.lows,
   };
 }
 

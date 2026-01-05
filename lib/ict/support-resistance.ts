@@ -149,3 +149,67 @@ export function getKeyLevels(
   return levels.slice(0, 5);
 }
 
+/**
+ * Swing Point Interface
+ */
+export interface SwingPoint {
+  price: number;
+  time: number;
+}
+
+/**
+ * Get the latest N swing highs and lows from price data
+ * Returns the most recent swing points (not grouped)
+ */
+export function getLatestSwingPoints(
+  data: TimeframeData[],
+  count: number = 5
+): {
+  highs: SwingPoint[];
+  lows: SwingPoint[];
+} {
+  const swingHighs: SwingPoint[] = [];
+  const swingLows: SwingPoint[] = [];
+
+  if (data.length < 5) {
+    return { highs: [], lows: [] };
+  }
+
+  // Detect swing points (local extrema)
+  for (let i = 2; i < data.length - 2; i++) {
+    const prev2 = data[i - 2];
+    const prev1 = data[i - 1];
+    const curr = data[i];
+    const next1 = data[i + 1];
+    const next2 = data[i + 2];
+
+    // Swing high: higher than 2 candles before and after
+    if (
+      curr.high > prev2.high &&
+      curr.high > prev1.high &&
+      curr.high > next1.high &&
+      curr.high > next2.high
+    ) {
+      swingHighs.push({ price: curr.high, time: curr.time });
+    }
+
+    // Swing low: lower than 2 candles before and after
+    if (
+      curr.low < prev2.low &&
+      curr.low < prev1.low &&
+      curr.low < next1.low &&
+      curr.low < next2.low
+    ) {
+      swingLows.push({ price: curr.low, time: curr.time });
+    }
+  }
+
+  // Sort by time (most recent first) and take latest N
+  swingHighs.sort((a, b) => b.time - a.time);
+  swingLows.sort((a, b) => b.time - a.time);
+
+  return {
+    highs: swingHighs.slice(0, count),
+    lows: swingLows.slice(0, count),
+  };
+}

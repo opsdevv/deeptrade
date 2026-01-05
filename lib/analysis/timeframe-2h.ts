@@ -14,6 +14,7 @@ import {
   calculatePDLevel,
   getPremiumDiscount,
 } from '@/lib/ict/premium-discount';
+import { getLatestSwingPoints } from '@/lib/ict/support-resistance';
 
 /**
  * Analyze 2H timeframe to determine bias
@@ -79,6 +80,9 @@ export function analyze2HBias(data: TimeframeData[]): BiasAnalysis {
     rangeLow
   );
 
+  // Get latest 5 swing highs and lows
+  const swingPoints = getLatestSwingPoints(recentData, 5);
+
   return {
     bias,
     range_high: rangeHigh,
@@ -93,6 +97,8 @@ export function analyze2HBias(data: TimeframeData[]): BiasAnalysis {
     order_blocks: orderBlocks,
     liquidity_pools: liquidityPools,
     pd_level: pdLevel,
+    swing_highs: swingPoints.highs,
+    swing_lows: swingPoints.lows,
   };
 }
 

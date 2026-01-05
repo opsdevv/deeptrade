@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { useAuth } from '@/lib/auth/context';
 import { formatTimeWithTimezone } from '@/lib/utils/price-format';
 
 interface Instrument {
@@ -29,7 +28,6 @@ type Category = 'all' | 'forex' | 'stock_indices' | 'commodities' | 'derived' | 
 
 export default function Dashboard() {
   const router = useRouter();
-  const { user, loading: authLoading } = useAuth();
   const [allInstruments, setAllInstruments] = useState<Instrument[]>([]);
   const [filteredInstruments, setFilteredInstruments] = useState<Instrument[]>([]);
   const [groupedInstruments, setGroupedInstruments] = useState<Record<string, Instrument[]>>({});
@@ -44,12 +42,6 @@ export default function Dashboard() {
   const searchResultsRef = useRef<HTMLDivElement>(null);
   const blurTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Redirect to login if not authenticated
-  useEffect(() => {
-    if (!authLoading && !user) {
-      router.push('/login?redirect=/dashboard');
-    }
-  }, [user, authLoading, router]);
 
   const applyFilters = (instruments: Instrument[], category: Category, query: string) => {
     let filtered = [...instruments];
@@ -243,20 +235,6 @@ export default function Dashboard() {
   };
 
   const selectedInstrumentData = allInstruments.find((i) => i.symbol === selectedInstrument);
-
-  // Show loading while checking auth
-  if (authLoading) {
-    return (
-      <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
-        <div className="text-xl">Loading...</div>
-      </div>
-    );
-  }
-
-  // Don't render if not authenticated (will redirect)
-  if (!user) {
-    return null;
-  }
 
   return (
     <div className="min-h-screen bg-gray-900 text-white p-4 sm:p-6 lg:p-8">

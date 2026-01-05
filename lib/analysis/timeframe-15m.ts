@@ -15,6 +15,7 @@ import {
   getAsianRange,
 } from '@/lib/ict/liquidity';
 import { isInPremium, isInDiscount } from '@/lib/ict/premium-discount';
+import { getLatestSwingPoints } from '@/lib/ict/support-resistance';
 
 /**
  * Analyze 15m timeframe for liquidity sweeps and setup validation
@@ -158,6 +159,9 @@ export function analyze15mLiquidity(
     fvgPresent &&
     reactionStrength === 'strong';
 
+  // Get latest 5 swing highs and lows
+  const swingPoints = getLatestSwingPoints(recentData, 5);
+
   return {
     liquidity_taken: liquidityTaken,
     liquidity_type: liquidityType,
@@ -168,6 +172,8 @@ export function analyze15mLiquidity(
     liquidity_sweeps: liquiditySweeps,
     fvgs: alignedFVGs,
     displacement,
+    swing_highs: swingPoints.highs,
+    swing_lows: swingPoints.lows,
   };
 }
 

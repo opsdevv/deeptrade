@@ -30,52 +30,19 @@ export async function POST(request: NextRequest) {
     fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/deriv/auth/route.ts:24',message:'Before createServerClient call',data:{hasRequest:!!request,hasResponse:false},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
     // #endregion
     const response = new NextResponse();
-    // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/deriv/auth/route.ts:25',message:'After creating response, before createServerClient',data:{hasRequest:!!request,hasResponse:!!response},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
-    // #endregion
     const supabase = createServerClient(request, response);
-    // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/deriv/auth/route.ts:25',message:'After createServerClient call',data:{hasSupabase:!!supabase,supabaseType:supabase?.constructor?.name},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
-    // #endregion
     if (!supabase) {
-      // #region agent log
-      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/deriv/auth/route.ts:26',message:'createServerClient returned null - returning 500',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
-      // #endregion
       return NextResponse.json(
         { error: 'Database not configured' },
         { status: 500 }
       );
     }
 
-    // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/deriv/auth/route.ts:34',message:'Before getUser call',data:{hasSupabase:!!supabase,hasAuth:!!supabase.auth},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
-    // #endregion
     // Get current user
     const { data: { user }, error: userError } = await supabase.auth.getUser();
-    // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/deriv/auth/route.ts:34',message:'After getUser call',data:{hasUser:!!user,hasError:!!userError,errorMessage:userError?.message,errorCode:userError?.status,errorName:userError?.name,userId:user?.id,userEmail:user?.email},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
-    // #endregion
-    if (userError) {
-      // #region agent log
-      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/deriv/auth/route.ts:35',message:'Returning 401 due to userError',data:{errorMessage:userError.message,errorCode:userError.status,errorName:userError.name},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
-      // #endregion
-      console.error('Supabase auth error:', userError);
+    if (userError || !user) {
       return NextResponse.json(
-        { 
-          error: 'Authentication failed. Please make sure you are logged in.',
-          details: userError.message 
-        },
-        { status: 401 }
-      );
-    }
-    if (!user) {
-      // #region agent log
-      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/deriv/auth/route.ts:45',message:'Returning 401 due to null user',data:{hasError:!!userError},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H3'})}).catch(()=>{});
-      // #endregion
-      return NextResponse.json(
-        { 
-          error: 'You must be logged in to add trading accounts. Please log in and try again.' 
-        },
+        { error: 'Unauthorized' },
         { status: 401 }
       );
     }
@@ -103,13 +70,22 @@ export async function POST(request: NextRequest) {
     // Test login credentials (only if password is provided or we're creating new)
     let loginResult;
     if (password || !account_id) {
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/deriv/auth/route.ts:61',message:'Before loginToDerivAccount in POST',data:{hasLoginId:!!login_id,hasPassword:!!password,hasExistingPassword:!!existingPassword,hasServer:!!server},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H4'})}).catch(()=>{});
+      // #endregion
       try {
         loginResult = await loginToDerivAccount({
           login: login_id,
           password: password || existingPassword,
           server: server,
         });
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/deriv/auth/route.ts:68',message:'After loginToDerivAccount in POST',data:{success:loginResult.success,hasError:!!loginResult.error},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H4'})}).catch(()=>{});
+        // #endregion
       } catch (loginError: any) {
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/deriv/auth/route.ts:70',message:'Exception in loginToDerivAccount POST',data:{errorMessage:loginError.message,errorStack:loginError.stack?.substring(0,300)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H4'})}).catch(()=>{});
+        // #endregion
         return NextResponse.json(
           { error: `Login failed: ${loginError.message}` },
           { status: 400 }
@@ -174,6 +150,8 @@ export async function POST(request: NextRequest) {
         success: true,
         account: updatedAccount,
         message: 'Deriv account updated successfully',
+      }, {
+        headers: response.headers,
       });
     } else {
       // Create new account - unselect all other accounts for this user
@@ -203,6 +181,8 @@ export async function POST(request: NextRequest) {
         success: true,
         account: newAccount,
         message: 'Deriv account connected successfully',
+      }, {
+        headers: response.headers,
       });
     }
   } catch (error: any) {
