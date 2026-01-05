@@ -1006,7 +1006,7 @@ export async function getAccountList(authToken: string): Promise<DerivAccountInf
  * Get default instrument list with categories
  * Comprehensive list of all Deriv symbols organized by category
  */
-function getDefaultInstruments(): DerivInstrument[] {
+export function getDefaultInstruments(): DerivInstrument[] {
   return [
     // ============================================
     // DERIVED/SYNTHETIC INDICES
