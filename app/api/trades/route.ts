@@ -4,9 +4,10 @@ import { getCurrentPrice } from '@/lib/api/deriv';
 
 export async function GET(request: NextRequest) {
   try {
-    const response = new NextResponse();
-    const supabase = createServerClient(request, response);
-    if (!supabase) {
+    let supabase;
+    try {
+      supabase = createServerClient();
+    } catch {
       return NextResponse.json(
         { error: 'Database not configured' },
         { status: 500 }
@@ -102,7 +103,6 @@ export async function GET(request: NextRequest) {
         success: true,
         trades: updatedTrades || trades,
       }, {
-        headers: response.headers,
       });
     }
 
@@ -110,7 +110,6 @@ export async function GET(request: NextRequest) {
       success: true,
       trades: trades || [],
     }, {
-      headers: response.headers,
     });
   } catch (error: any) {
     console.error('Error in GET /api/trades:', error);

@@ -6,6 +6,10 @@ import { createServerClient } from '@/lib/supabase/client';
 import { generatePrompt } from '@/lib/prompts/deepseek';
 import { callDeepSeekAPI, extractJSONFromResponse } from '@/lib/api/deepseek';
 
+// Vercel serverless functions timeout after 10s (Hobby) or 60s (Pro)
+// External API calls can take time
+export const maxDuration = 60;
+
 export async function POST(request: NextRequest) {
   try {
     const body: DeepSeekRequest = await request.json();
@@ -43,12 +47,13 @@ export async function POST(request: NextRequest) {
     const instrument = (analysisRun.instruments as any)?.symbol || 'UNKNOWN';
     const results = (analysisRun.analysis_results as any[]) || [];
     const signal = (analysisRun.trade_signals as any[])?.[0];
+    const runData = analysisRun as any;
 
     const analysisResult = {
       instrument,
-      timestamp: new Date(analysisRun.timestamp).getTime(),
-      data_window_start: new Date(analysisRun.data_window_start).getTime(),
-      data_window_end: new Date(analysisRun.data_window_end).getTime(),
+      timestamp: new Date(runData.timestamp).getTime(),
+      data_window_start: new Date(runData.data_window_start).getTime(),
+      data_window_end: new Date(runData.data_window_end).getTime(),
       timeframe_2h: results.find((r) => r.timeframe === '2h')?.result_data || {},
       timeframe_15m: results.find((r) => r.timeframe === '15m')?.result_data || {},
       timeframe_5m: results.find((r) => r.timeframe === '5m')?.result_data || {},

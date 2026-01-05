@@ -78,8 +78,9 @@ export async function POST(request: NextRequest) {
 
     if (existing) {
       // Update existing signal with new analysis data
+      const existingData = existing as any;
       const updateData: any = {
-        analysis_run_id: analysis_run_id || existing.analysis_run_id,
+        analysis_run_id: analysis_run_id || existingData.analysis_run_id,
         analysis_data: analysis_data || {},
         updated_at: new Date().toISOString(),
       };

@@ -17,8 +17,8 @@ async function cleanupOldRuns(supabase: any) {
 
     const protectedRunIds = new Set(
       (watchlistRuns || [])
-        .map((w) => w.analysis_run_id)
-        .filter((id): id is string => id !== null)
+        .map((w: { analysis_run_id: string | null }) => w.analysis_run_id)
+        .filter((id: string | null): id is string => id !== null)
     );
 
     // Find analysis runs older than 24 hours that are not in watchlist
@@ -29,8 +29,8 @@ async function cleanupOldRuns(supabase: any) {
 
     // Filter out protected runs (those in watchlist)
     const runsToDelete = (oldRuns || [])
-      .filter((run) => !protectedRunIds.has(run.id))
-      .map((run) => run.id);
+      .filter((run: { id: string }) => !protectedRunIds.has(run.id))
+      .map((run: { id: string }) => run.id);
 
     if (runsToDelete.length > 0) {
       // Delete the analysis runs (CASCADE will delete related records)

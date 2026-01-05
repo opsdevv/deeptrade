@@ -38,7 +38,8 @@ export default function MSSMarkers({
     });
 
     if (markers.length > 0) {
-      series.setMarkers(markers);
+      // Markers are set on the series in lightweight-charts v5+
+      (series as any).setMarkers(markers);
     }
   }, [chart, series, mssPoints, data]);
 

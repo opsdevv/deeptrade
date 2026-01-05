@@ -168,7 +168,7 @@ export default function PriceChart({
         borderVisible: false,
         wickUpColor: '#26a69a',
         wickDownColor: '#ef5350',
-      });
+      } as any);
       // #region agent log
       fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'PriceChart.tsx:123',message:'After addSeries',data:{seriesCreated:!!candlestickSeries},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'B'})}).catch(()=>{});
       // #endregion
@@ -181,7 +181,7 @@ export default function PriceChart({
       throw error;
     }
     
-    seriesRef.current = candlestickSeries;
+    seriesRef.current = candlestickSeries as ISeriesApi<'Candlestick'>;
 
     // Set price formatter for the chart (after series is created)
     // #region agent log

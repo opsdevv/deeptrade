@@ -5,9 +5,10 @@ import { loginToDerivAccount } from '@/lib/api/deriv-auth';
 
 export async function GET(request: NextRequest) {
   try {
-    const response = new NextResponse();
-    const supabase = createServerClient(request, response);
-    if (!supabase) {
+    let supabase;
+    try {
+      supabase = createServerClient();
+    } catch {
       return NextResponse.json(
         { error: 'Database not configured' },
         { status: 500 }
@@ -31,8 +32,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         success: true,
         accounts: [],
-      }, {
-        headers: response.headers,
       });
     }
 
@@ -92,8 +91,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         success: true,
         accounts: accountList,
-      }, {
-        headers: response.headers,
       });
     } catch (accountListError: any) {
       console.error('Account list error:', accountListError);

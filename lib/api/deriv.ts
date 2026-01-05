@@ -3,9 +3,24 @@
 import { TimeframeData, Timeframe } from '@/types/analysis';
 import WebSocket from 'ws';
 
-const DERIV_WS_URL = process.env.DERIV_WS_URL || 'wss://ws.derivws.com/websockets/v3';
-const DERIV_APP_ID = process.env.DERIV_APP_ID || '1089'; // Default test app ID
-const DERIV_API_KEY = process.env.DERIV_API_KEY || '25hYKarkuJw1gis';
+// Environment variables - checked at runtime, not module load time
+function getDerivConfig() {
+  const DERIV_WS_URL = process.env.DERIV_WS_URL;
+  const DERIV_APP_ID = process.env.DERIV_APP_ID;
+  const DERIV_API_KEY = process.env.DERIV_API_KEY;
+
+  if (!DERIV_WS_URL) {
+    throw new Error('DERIV_WS_URL environment variable is required');
+  }
+  if (!DERIV_APP_ID) {
+    throw new Error('DERIV_APP_ID environment variable is required');
+  }
+  if (!DERIV_API_KEY) {
+    throw new Error('DERIV_API_KEY environment variable is required');
+  }
+
+  return { DERIV_WS_URL, DERIV_APP_ID, DERIV_API_KEY };
+}
 
 // WebSocket connection pool for reuse
 let wsConnection: WebSocket | null = null;
@@ -265,8 +280,9 @@ async function initializeConnection(): Promise<WebSocket> {
   connectionRetries++;
 
   return new Promise((resolve, reject) => {
-    console.log(`[INFO] Connecting to Deriv WebSocket (attempt ${connectionRetries}): ${DERIV_WS_URL}?app_id=${DERIV_APP_ID}`);
-    const ws = new WebSocket(`${DERIV_WS_URL}?app_id=${DERIV_APP_ID}`);
+    const config = getDerivConfig();
+    console.log(`[INFO] Connecting to Deriv WebSocket (attempt ${connectionRetries}): ${config.DERIV_WS_URL}?app_id=${config.DERIV_APP_ID}`);
+    const ws = new WebSocket(`${config.DERIV_WS_URL}?app_id=${config.DERIV_APP_ID}`);
 
     const connectionTimeout = setTimeout(() => {
       if (!wsReady) {
@@ -298,8 +314,9 @@ async function initializeConnection(): Promise<WebSocket> {
       connectionRetries = 0; // Reset retry counter on success
 
       // Authorize if we have an API key
-      if (DERIV_API_KEY) {
-        authorizeConnection(ws, DERIV_API_KEY)
+      const config = getDerivConfig();
+      if (config.DERIV_API_KEY) {
+        authorizeConnection(ws, config.DERIV_API_KEY)
           .then(() => {
             wsReady = true;
             isConnecting = false;
@@ -524,7 +541,8 @@ export async function fetchMarketData(
   timeframe: Timeframe,
   count: number = 200
 ): Promise<TimeframeData[]> {
-  if (!DERIV_API_KEY) {
+  const config = getDerivConfig();
+  if (!config.DERIV_API_KEY) {
     throw new Error('DERIV_API_KEY not configured. Please set DERIV_API_KEY in your environment variables.');
   }
 
@@ -699,7 +717,8 @@ export interface CurrentPrice {
  * Get current/live price for a symbol from Deriv API
  */
 export async function getCurrentPrice(symbol: string): Promise<CurrentPrice | null> {
-  if (!DERIV_API_KEY) {
+  const config = getDerivConfig();
+  if (!config.DERIV_API_KEY) {
     console.warn('[WARN] DERIV_API_KEY not configured, cannot fetch current price');
     return null;
   }
@@ -823,7 +842,8 @@ export async function getAvailableInstruments(): Promise<DerivInstrument[]> {
   // Always return default instruments as fallback
   const defaultInstruments = getDefaultInstruments();
   
-  if (!DERIV_API_KEY) {
+  const config = getDerivConfig();
+  if (!config.DERIV_API_KEY) {
     console.warn('[WARN] DERIV_API_KEY not configured, using default instrument list');
     return defaultInstruments;
   }
@@ -889,7 +909,8 @@ export interface DerivAccountInfo {
 export async function getAccountList(authToken: string): Promise<DerivAccountInfo[]> {
   try {
     // Create a new connection with the auth token
-    const ws = new WebSocket(`${DERIV_WS_URL}?app_id=${DERIV_APP_ID}`);
+    const config = getDerivConfig();
+    const ws = new WebSocket(`${config.DERIV_WS_URL}?app_id=${config.DERIV_APP_ID}`);
     let requestId = 1;
     const authReqId = requestId++;
     const accountListReqId = requestId++;

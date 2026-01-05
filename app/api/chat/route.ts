@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/client';
-import { callDeepSeekAPI } from '@/lib/api/deepseek';
+import { callDeepSeekAPI, ChatMessage } from '@/lib/api/deepseek';
 import { getCurrentPrice, fetchMarketData } from '@/lib/api/deriv';
 import { checkRateLimit, RateLimits } from '@/lib/redis/rate-limit';
+
+// Vercel serverless functions timeout after 10s (Hobby) or 60s (Pro)
+// Chat operations can involve external API calls
+export const maxDuration = 60;
 
 export async function GET(request: NextRequest) {
   try {
@@ -233,7 +237,7 @@ export async function POST(request: NextRequest) {
     };
 
     // Build conversation messages for DeepSeek
-    const messages: Array<{ role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string } }> }> = [];
+    const messages: ChatMessage[] = [];
 
     // System message with analysis context
     let systemPrompt = `You are a trading analysis assistant. You are helping analyze an ICT (Inner Circle Trader) scalping analysis.
@@ -295,12 +299,12 @@ You MUST use this actual current price when discussing the symbol. This is real-
           // Include image in message if URL is available
           // Note: DeepSeek may not support vision, so we'll include it in text as well
           messages.push({
-            role: msg.role,
+            role: msg.role as 'system' | 'user' | 'assistant',
             content: msg.content + (msg.content ? '\n\n[Screenshot attached: ' + absoluteScreenshotUrl + ']' : '[Screenshot: ' + absoluteScreenshotUrl + ']'),
           });
         } else {
           messages.push({
-            role: msg.role,
+            role: msg.role as 'system' | 'user' | 'assistant',
             content: msg.content,
           });
         }

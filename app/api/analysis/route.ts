@@ -8,6 +8,10 @@ import { createServerClient } from '@/lib/supabase/client';
 import { redisCache, CacheKeys } from '@/lib/redis/client';
 import { checkRateLimit, RateLimits } from '@/lib/redis/rate-limit';
 
+// Vercel serverless functions timeout after 10s (Hobby) or 60s (Pro)
+// This route can take time due to data fetching and analysis
+export const maxDuration = 60;
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);

@@ -5,6 +5,10 @@ import { DataRequest, Timeframe } from '@/types/analysis';
 import { fetchMarketDataForTimeframes } from '@/lib/data/fetcher';
 import { checkRateLimit, RateLimits } from '@/lib/redis/rate-limit';
 
+// Vercel serverless functions timeout after 10s (Hobby) or 60s (Pro)
+// Market data fetching can take time, especially with WebSocket operations
+export const maxDuration = 60;
+
 export async function POST(request: NextRequest) {
   try {
     // Rate limiting

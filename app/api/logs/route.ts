@@ -3,9 +3,10 @@ import { createServerClient } from '@/lib/supabase/client';
 
 export async function GET(request: NextRequest) {
   try {
-    const response = new NextResponse();
-    const supabase = createServerClient(request, response);
-    if (!supabase) {
+    let supabase;
+    try {
+      supabase = createServerClient();
+    } catch {
       return NextResponse.json(
         { error: 'Database not configured' },
         { status: 500 }
@@ -74,9 +75,7 @@ export async function GET(request: NextRequest) {
       page_size: pageSize,
       total_pages: totalPages,
       total_count: count || 0,
-    }, {
-      headers: response.headers,
-    });
+      });
   } catch (error: any) {
     console.error('Error in GET /api/logs:', error);
     return NextResponse.json(

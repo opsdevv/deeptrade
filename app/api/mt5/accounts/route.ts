@@ -3,8 +3,15 @@ import { createServerClient } from '@/lib/supabase/client';
 
 export async function GET(request: NextRequest) {
   try {
-    const response = new NextResponse();
-    const supabase = createServerClient(request, response);
+    let supabase;
+    try {
+      supabase = createServerClient();
+    } catch {
+      return NextResponse.json(
+        { error: 'Database not configured' },
+        { status: 500 }
+      );
+    }
     if (!supabase) {
       return NextResponse.json(
         { error: 'Database not configured' },
@@ -50,7 +57,6 @@ export async function GET(request: NextRequest) {
       success: true,
       accounts: accounts || [],
     }, {
-      headers: response.headers,
     });
   } catch (error: any) {
     console.error('Error in GET /api/mt5/accounts:', error);
@@ -80,8 +86,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const response = new NextResponse();
-    const supabase = createServerClient(request, response);
+    let supabase;
+    try {
+      supabase = createServerClient();
+    } catch {
+      return NextResponse.json(
+        { error: 'Database not configured' },
+        { status: 500 }
+      );
+    }
     if (!supabase) {
       return NextResponse.json(
         { error: 'Database not configured' },
@@ -226,8 +239,15 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    const response = new NextResponse();
-    const supabase = createServerClient(request, response);
+    let supabase;
+    try {
+      supabase = createServerClient();
+    } catch {
+      return NextResponse.json(
+        { error: 'Database not configured' },
+        { status: 500 }
+      );
+    }
     if (!supabase) {
       return NextResponse.json(
         { error: 'Database not configured' },
@@ -305,8 +325,15 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    const response = new NextResponse();
-    const supabase = createServerClient(request, response);
+    let supabase;
+    try {
+      supabase = createServerClient();
+    } catch {
+      return NextResponse.json(
+        { error: 'Database not configured' },
+        { status: 500 }
+      );
+    }
     if (!supabase) {
       return NextResponse.json(
         { error: 'Database not configured' },

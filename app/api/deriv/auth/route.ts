@@ -21,9 +21,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const response = new NextResponse();
-    const supabase = createServerClient(request, response);
-    if (!supabase) {
+    let supabase;
+    try {
+      supabase = createServerClient();
+    } catch {
       return NextResponse.json(
         { error: 'Database not configured' },
         { status: 500 }
@@ -133,8 +134,6 @@ export async function POST(request: NextRequest) {
         success: true,
         account: updatedAccount,
         message: 'Deriv account updated successfully',
-      }, {
-        headers: response.headers,
       });
     } else {
       // Create new account - unselect all other accounts for this user
@@ -164,8 +163,6 @@ export async function POST(request: NextRequest) {
         success: true,
         account: newAccount,
         message: 'Deriv account connected successfully',
-      }, {
-        headers: response.headers,
       });
     }
   } catch (error: any) {
@@ -179,9 +176,10 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
-    const response = new NextResponse();
-    const supabase = createServerClient(request, response);
-    if (!supabase) {
+    let supabase;
+    try {
+      supabase = createServerClient();
+    } catch {
       return NextResponse.json(
         { error: 'Database not configured' },
         { status: 500 }
@@ -213,8 +211,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       accounts: accounts || [],
-    }, {
-      headers: response.headers,
     });
   } catch (error: any) {
     console.error('Error in GET /api/deriv/auth:', error);
@@ -238,9 +234,10 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    const response = new NextResponse();
-    const supabase = createServerClient(request, response);
-    if (!supabase) {
+    let supabase;
+    try {
+      supabase = createServerClient();
+    } catch {
       return NextResponse.json(
         { error: 'Database not configured' },
         { status: 500 }
@@ -305,9 +302,10 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    const response = new NextResponse();
-    const supabase = createServerClient(request, response);
-    if (!supabase) {
+    let supabase;
+    try {
+      supabase = createServerClient();
+    } catch {
       return NextResponse.json(
         { error: 'Database not configured' },
         { status: 500 }

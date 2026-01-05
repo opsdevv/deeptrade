@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/client';
-import { callDeepSeekAPI } from '@/lib/api/deepseek';
+import { callDeepSeekAPI, ChatMessage } from '@/lib/api/deepseek';
 import { getAvailableInstruments, getCurrentPrice, fetchMarketData } from '@/lib/api/deriv';
 import { analyze } from '@/lib/analysis/engine';
 import { detectSymbolFromText } from '@/lib/utils/symbol-detector';
@@ -323,10 +323,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Build conversation messages for DeepSeek
-    const messages: Array<{ 
-      role: string; 
-      content: string | Array<{ type: string; text?: string; image_url?: { url: string } }> 
-    }> = [];
+    const messages: ChatMessage[] = [];
 
     // System message with trading context
     let systemPrompt = `You are an expert trading analysis assistant specializing in ICT (Inner Circle Trader) and SMC (Smart Money Concepts) methodologies. You help traders analyze market conditions, identify trading opportunities, and understand price action.
@@ -509,7 +506,7 @@ You can suggest common symbols like Volatility 75 Index (R_75), Volatility 50 In
         if (absoluteScreenshotUrl) {
           // For DeepSeek vision API, we'll use the image_url format
           messages.push({
-            role: msg.role,
+            role: msg.role as 'system' | 'user' | 'assistant',
             content: [
               {
                 type: 'text',
@@ -523,7 +520,7 @@ You can suggest common symbols like Volatility 75 Index (R_75), Volatility 50 In
           });
         } else {
           messages.push({
-            role: msg.role,
+            role: msg.role as 'system' | 'user' | 'assistant',
             content: msg.content,
           });
         }

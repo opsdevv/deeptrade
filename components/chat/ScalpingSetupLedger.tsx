@@ -123,7 +123,7 @@ export function parseScalpingSetups(content: string): ScalpingSetup[] {
   const setups: ScalpingSetup[] = [];
   
   // Pattern to match bullish setup - more flexible
-  const bullishPattern = /\*\*Bullish Setup.*?If\s*\{?([0-9.]+)\}?\s*holds.*?\*\*:?\s*\n- Entry Zone:\s*([^\n]+)\n- Stop Loss:\s*([^\n]+)\n- Target:\s*([^\n]+)\s*\(([^)]+)% move\)\n- Trigger:\s*([^\n]+)/is;
+  const bullishPattern = /\*\*Bullish Setup[\s\S]*?If\s*\{?([0-9.]+)\}?\s*holds[\s\S]*?\*\*:?\s*\n- Entry Zone:\s*([^\n]+)\n- Stop Loss:\s*([^\n]+)\n- Target:\s*([^\n]+)\s*\(([^)]+)% move\)\n- Trigger:\s*([^\n]+)/i;
   const bullishMatch = content.match(bullishPattern);
   
   if (bullishMatch) {
@@ -139,7 +139,7 @@ export function parseScalpingSetups(content: string): ScalpingSetup[] {
   }
   
   // Pattern to match bearish setup - more flexible
-  const bearishPattern = /\*\*Bearish Setup.*?If\s*\{?([0-9.]+)\}?\s*breaks.*?\*\*:?\s*\n- Entry Zone:\s*([^\n]+)\n- Stop Loss:\s*([^\n]+)\n- Target:\s*([^\n]+)\s*\(([^)]+)% move\)\n- Trigger:\s*([^\n]+)/is;
+  const bearishPattern = /\*\*Bearish Setup[\s\S]*?If\s*\{?([0-9.]+)\}?\s*breaks[\s\S]*?\*\*:?\s*\n- Entry Zone:\s*([^\n]+)\n- Stop Loss:\s*([^\n]+)\n- Target:\s*([^\n]+)\s*\(([^)]+)% move\)\n- Trigger:\s*([^\n]+)/i;
   const bearishMatch = content.match(bearishPattern);
   
   if (bearishMatch) {

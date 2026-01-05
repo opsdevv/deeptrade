@@ -25,18 +25,33 @@ export async function getRedisClient(): Promise<RedisClientType | null> {
   isConnecting = true;
   connectionPromise = (async () => {
     try {
+      // Redis configuration - fail gracefully if not configured (optional service)
+      const redisHost = process.env.REDIS_HOST;
+      const redisPort = process.env.REDIS_PORT;
+      const redisPassword = process.env.REDIS_PASSWORD;
+      const redisUsername = process.env.REDIS_USERNAME || 'default';
+
+      // If Redis is not configured, return null (graceful degradation)
+      if (!redisHost || !redisPort) {
+        console.warn('[Redis] Redis not configured. Caching will be disabled.');
+        isConnecting = false;
+        client = null;
+        return;
+      }
+
       client = createClient({
-        username: process.env.REDIS_USERNAME || 'default',
-        password: process.env.REDIS_PASSWORD || 'N5G9cSDlKluJDBKeTyqacwCgot7hqxDo',
+        username: redisUsername,
+        password: redisPassword,
         socket: {
-          host: process.env.REDIS_HOST || 'redis-14502.fcrce213.us-east-1-3.ec2.cloud.redislabs.com',
-          port: parseInt(process.env.REDIS_PORT || '14502'),
+          host: redisHost,
+          port: parseInt(redisPort),
+          connectTimeout: 5000, // 5 second timeout for serverless
           reconnectStrategy: (retries) => {
-            if (retries > 10) {
+            if (retries > 5) { // Reduced retries for serverless
               console.error('[Redis] Max reconnection attempts reached');
               return new Error('Max reconnection attempts reached');
             }
-            return Math.min(retries * 100, 3000);
+            return Math.min(retries * 100, 2000); // Faster retries for serverless
           },
         },
       });
@@ -59,12 +74,10 @@ export async function getRedisClient(): Promise<RedisClientType | null> {
       });
 
       await client.connect();
-      return client;
     } catch (error) {
       console.error('[Redis] Connection failed:', error);
       isConnecting = false;
       client = null;
-      return null;
     }
   })();
 

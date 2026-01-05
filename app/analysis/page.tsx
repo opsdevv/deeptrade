@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import PriceDataView from '@/components/analysis/PriceDataView';
@@ -160,7 +160,7 @@ function JSONViewer({ data }: { data: any }) {
   );
 }
 
-export default function AnalysisPage() {
+function AnalysisPageContent() {
   const searchParams = useSearchParams();
   const runId = searchParams.get('run_id');
   const router = useRouter();
@@ -952,3 +952,14 @@ export default function AnalysisPage() {
   );
 }
 
+export default function AnalysisPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
+        <div className="text-xl">Loading...</div>
+      </div>
+    }>
+      <AnalysisPageContent />
+    </Suspense>
+  );
+}

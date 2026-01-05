@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { writeFile, mkdir } from 'fs/promises';
-import { join } from 'path';
-import { existsSync } from 'fs';
+import { createServerClient } from '@/lib/supabase/client';
+
+// Vercel serverless functions have a max duration limit
+export const maxDuration = 30;
 
 export async function POST(request: NextRequest) {
   try {
@@ -41,10 +42,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create uploads directory if it doesn't exist
-    const uploadsDir = join(process.cwd(), 'public', 'uploads', 'screenshots');
-    if (!existsSync(uploadsDir)) {
-      await mkdir(uploadsDir, { recursive: true });
+    // Get Supabase client for storage
+    let supabase;
+    try {
+      supabase = createServerClient();
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: 'Storage service not configured. Please set Supabase environment variables.' },
+        { status: 503 }
+      );
     }
 
     // Generate unique filename
@@ -52,19 +58,36 @@ export async function POST(request: NextRequest) {
     const extension = file.name.split('.').pop() || 'png';
     const identifier = runId || sessionId || 'standalone';
     const filename = `${identifier}-${timestamp}.${extension}`;
-    const filepath = join(uploadsDir, filename);
+    const filePath = `screenshots/${filename}`;
 
-    // Convert file to buffer and save
+    // Convert file to buffer
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
-    await writeFile(filepath, buffer);
 
-    // Return public URL
-    const url = `/uploads/screenshots/${filename}`;
+    // Upload to Supabase Storage
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from('uploads')
+      .upload(filePath, buffer, {
+        contentType: file.type,
+        upsert: false,
+      });
+
+    if (uploadError) {
+      console.error('Supabase storage upload error:', uploadError);
+      return NextResponse.json(
+        { error: `Failed to upload file: ${uploadError.message}` },
+        { status: 500 }
+      );
+    }
+
+    // Get public URL
+    const { data: urlData } = supabase.storage
+      .from('uploads')
+      .getPublicUrl(filePath);
 
     return NextResponse.json({
       success: true,
-      url,
+      url: urlData.publicUrl,
     });
   } catch (error: any) {
     console.error('Error uploading file:', error);
