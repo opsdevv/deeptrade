@@ -4,11 +4,6 @@ import { loginToDerivAccount } from '@/lib/api/deriv-auth';
 
 export async function POST(request: NextRequest) {
   try {
-    // #region agent log
-    const cookieHeaders = request.headers.get('cookie');
-    const allCookies = request.cookies.getAll();
-    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/deriv/auth/route.ts:5',message:'POST handler entry',data:{method:'POST',hasCookieHeader:!!cookieHeaders,cookieHeaderLength:cookieHeaders?.length||0,cookieCount:allCookies.length,cookieNames:allCookies.map(c=>c.name),hasSupabaseCookies:allCookies.some(c=>c.name.includes('supabase')||c.name.includes('sb-'))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H4'})}).catch(()=>{});
-    // #endregion
     const body = await request.json();
     const { account_name, broker, server, login_id, password, account_type, account_id, api_token } = body;
 
@@ -26,9 +21,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/deriv/auth/route.ts:24',message:'Before createServerClient call',data:{hasRequest:!!request,hasResponse:false},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
-    // #endregion
     const response = new NextResponse();
     const supabase = createServerClient(request, response);
     if (!supabase) {
@@ -70,22 +62,13 @@ export async function POST(request: NextRequest) {
     // Test login credentials (only if password is provided or we're creating new)
     let loginResult;
     if (password || !account_id) {
-      // #region agent log
-      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/deriv/auth/route.ts:61',message:'Before loginToDerivAccount in POST',data:{hasLoginId:!!login_id,hasPassword:!!password,hasExistingPassword:!!existingPassword,hasServer:!!server},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H4'})}).catch(()=>{});
-      // #endregion
       try {
         loginResult = await loginToDerivAccount({
           login: login_id,
           password: password || existingPassword,
           server: server,
         });
-        // #region agent log
-        fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/deriv/auth/route.ts:68',message:'After loginToDerivAccount in POST',data:{success:loginResult.success,hasError:!!loginResult.error},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H4'})}).catch(()=>{});
-        // #endregion
       } catch (loginError: any) {
-        // #region agent log
-        fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/deriv/auth/route.ts:70',message:'Exception in loginToDerivAccount POST',data:{errorMessage:loginError.message,errorStack:loginError.stack?.substring(0,300)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H4'})}).catch(()=>{});
-        // #endregion
         return NextResponse.json(
           { error: `Login failed: ${loginError.message}` },
           { status: 400 }
@@ -205,20 +188,9 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // #region agent log
-    const cookieHeaders = request.headers.get('cookie');
-    const allCookies = request.cookies.getAll();
-    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/deriv/auth/route.ts:181',message:'Before getUser call in GET',data:{hasSupabase:!!supabase,method:'GET',cookieHeader:cookieHeaders?.substring(0,100),cookieCount:allCookies.length,cookieNames:allCookies.map(c=>c.name)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
     // Get current user
     const { data: { user }, error: userError } = await supabase.auth.getUser();
-    // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/deriv/auth/route.ts:189',message:'After getUser call in GET',data:{hasUser:!!user,hasError:!!userError,errorMessage:userError?.message,errorCode:userError?.status,userId:user?.id,userEmail:user?.email},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
     if (userError || !user) {
-      // #region agent log
-      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/deriv/auth/route.ts:189',message:'Returning 401 Unauthorized in GET',data:{userError:userError?.message,hasUser:!!user},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }

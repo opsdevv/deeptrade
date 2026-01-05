@@ -113,9 +113,6 @@ export async function loginToDerivAccount(
             }
           }
         } catch (error: any) {
-          // #region agent log
-          fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv-auth.ts:100',message:'Parse error in message handler',data:{errorMessage:error.message,errorStack:error.stack?.substring(0,200)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
-          // #endregion
           if (!isResolved) {
             clearTimeout(timeout);
             isResolved = true;
@@ -129,9 +126,6 @@ export async function loginToDerivAccount(
       });
 
       ws.on('error', (error) => {
-        // #region agent log
-        fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv-auth.ts:110',message:'WebSocket error event',data:{errorMessage:error.message,wsReadyState:ws.readyState},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
-        // #endregion
         if (!isResolved) {
           clearTimeout(timeout);
           isResolved = true;
@@ -142,19 +136,13 @@ export async function loginToDerivAccount(
         }
       });
 
-      ws.on('close', (code, reason) => {
-        // #region agent log
-        fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv-auth.ts:118',message:'WebSocket close event',data:{code,reason:reason?.toString(),isResolved},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
-        // #endregion
+      ws.on('close', () => {
         if (!isResolved) {
           clearTimeout(timeout);
         }
       });
     });
   } catch (error: any) {
-    // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv-auth.ts:122',message:'Outer catch block',data:{errorMessage:error.message,errorStack:error.stack?.substring(0,200)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
-    // #endregion
     return {
       success: false,
       error: `Failed to connect: ${error.message}`,
