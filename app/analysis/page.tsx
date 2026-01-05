@@ -913,7 +913,7 @@ export default function AnalysisPage() {
                 data={chartData[activeTimeframe]} 
                 timeframe={activeTimeframe} 
                 instrument={analysis.instrument}
-                drawingData={getDrawingDataForTimeframe(activeTimeframe)}
+                drawingData={getDrawingDataForTimeframe(activeTimeframe) ?? undefined}
                 supportResistance={supportResistance[activeTimeframe] || []}
               />
             </div>
