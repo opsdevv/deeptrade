@@ -22,9 +22,9 @@ export function getInstrumentConfig(symbol: string): InstrumentConfig {
 
   // Volatility indices
   if (symbolForMatching.includes('VOLATILITY') || symbolForMatching.includes('V50')) {
-    const config = {
+    const config: InstrumentConfig = {
       symbol: upperSymbol,
-      type: 'synthetic',
+      type: 'synthetic' as InstrumentType,
       use_session_filter: false,
       prioritize_mss: true,
       ignore_order_blocks: true,
@@ -34,14 +34,6 @@ export function getInstrumentConfig(symbol: string): InstrumentConfig {
     fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/analysis/instruments.ts:20',message:'getInstrumentConfig matched volatility',data:{symbol,config},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
     // #endregion
     return config;
-    return {
-      symbol: upperSymbol,
-      type: 'synthetic',
-      use_session_filter: false,
-      prioritize_mss: true,
-      ignore_order_blocks: true,
-      full_ict_model: false,
-    };
   }
 
   // Forex pairs and commodities (check both with and without frx prefix)
@@ -51,9 +43,9 @@ export function getInstrumentConfig(symbol: string): InstrumentConfig {
     symbolForMatching === 'GBPUSD' ||
     symbolForMatching === 'XAGUSD'
   ) {
-    const config = {
+    const config: InstrumentConfig = {
       symbol: upperSymbol,
-      type: 'forex',
+      type: 'forex' as InstrumentType,
       use_session_filter: true,
       prioritize_mss: false,
       ignore_order_blocks: false,
@@ -66,9 +58,9 @@ export function getInstrumentConfig(symbol: string): InstrumentConfig {
   }
 
   // Default configuration
-  const defaultConfig = {
+  const defaultConfig: InstrumentConfig = {
     symbol: upperSymbol,
-    type: 'forex',
+    type: 'forex' as InstrumentType,
     use_session_filter: true,
     prioritize_mss: false,
     ignore_order_blocks: false,
