@@ -295,9 +295,9 @@ export default function SmartTradePage() {
             { id: '4', label: 'Entry zone reached', met: false }, // Will be checked in real-time
             { id: '5', label: 'Confirmation signal', met: false }, // Will be checked in real-time
           ],
-          entryPrice,
-          stopLoss,
-          targetPrice,
+          entryPrice: entryPrice ?? undefined,
+          stopLoss: stopLoss ?? undefined,
+          targetPrice: targetPrice ?? undefined,
           direction,
           timeframe: '2m',
         },
