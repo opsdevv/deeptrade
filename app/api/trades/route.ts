@@ -3,11 +3,20 @@ import { createServerClient } from '@/lib/supabase/client';
 import { getCurrentPrice } from '@/lib/api/deriv';
 
 export async function GET(request: NextRequest) {
+  // #region agent log
+  fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/trades/route.ts:5',message:'GET /api/trades entry',data:{url:request.url,method:request.method},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'FIX'})}).catch(()=>{});
+  // #endregion
   try {
     let supabase;
     try {
       supabase = createServerClient();
-    } catch {
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/trades/route.ts:11',message:'Supabase client created',data:{hasSupabase:!!supabase,clientType:supabase?.constructor?.name},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'FIX'})}).catch(()=>{});
+      // #endregion
+    } catch (error: any) {
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/trades/route.ts:16',message:'Error creating Supabase client',data:{error:error?.message,errorStack:error?.stack},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'FIX'})}).catch(()=>{});
+      // #endregion
       return NextResponse.json(
         { error: 'Database not configured' },
         { status: 500 }
@@ -15,16 +24,16 @@ export async function GET(request: NextRequest) {
     }
 
     // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/trades/route.ts:16',message:'Before getUser call in GET',data:{hasSupabase:!!supabase,method:'GET'},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/trades/route.ts:22',message:'Before getUser call in GET',data:{hasSupabase:!!supabase,method:'GET'},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'FIX'})}).catch(()=>{});
     // #endregion
     // Get current user
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/trades/route.ts:21',message:'After getUser call in GET',data:{hasUser:!!user,hasError:!!userError,errorMessage:userError?.message,userId:user?.id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/trades/route.ts:26',message:'After getUser call in GET',data:{hasUser:!!user,hasError:!!userError,errorMessage:userError?.message,errorCode:userError?.code,errorStatus:userError?.status,userId:user?.id,userEmail:user?.email},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'FIX'})}).catch(()=>{});
     // #endregion
     if (userError || !user) {
       // #region agent log
-      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/trades/route.ts:24',message:'Returning 401 Unauthorized in GET',data:{userError:userError?.message,hasUser:!!user},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/trades/route.ts:30',message:'Returning 401 Unauthorized in GET',data:{userError:userError?.message,hasUser:!!user},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'FIX'})}).catch(()=>{});
       // #endregion
       return NextResponse.json(
         { error: 'Unauthorized' },
