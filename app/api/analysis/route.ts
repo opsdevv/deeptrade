@@ -107,34 +107,55 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    // Rate limiting
-    const clientId = request.headers.get('x-forwarded-for') || 
-                     request.headers.get('x-real-ip') || 
-                     'unknown';
-    const rateLimit = await checkRateLimit('analysis', {
-      ...RateLimits.analysis,
-      identifier: clientId,
-    });
+    // Rate limiting (with error handling - don't block if Redis fails)
+    let rateLimit: { allowed: boolean; remaining: number; resetAt: number } | null = null;
+    try {
+      const clientId = request.headers.get('x-forwarded-for') || 
+                       request.headers.get('x-real-ip') || 
+                       'unknown';
+      rateLimit = await checkRateLimit('analysis', {
+        ...RateLimits.analysis,
+        identifier: clientId,
+      });
 
-    if (!rateLimit.allowed) {
-      return NextResponse.json(
-        { 
-          error: 'Rate limit exceeded. Please wait before running another analysis.',
-          remaining: rateLimit.remaining,
-          resetAt: rateLimit.resetAt,
-        },
-        { 
-          status: 429,
-          headers: {
-            'X-RateLimit-Limit': RateLimits.analysis.maxRequests.toString(),
-            'X-RateLimit-Remaining': rateLimit.remaining.toString(),
-            'X-RateLimit-Reset': new Date(rateLimit.resetAt).toISOString(),
+      if (!rateLimit.allowed) {
+        return NextResponse.json(
+          { 
+            error: 'Rate limit exceeded. Please wait before running another analysis.',
+            remaining: rateLimit.remaining,
+            resetAt: rateLimit.resetAt,
           },
-        }
-      );
+          { 
+            status: 429,
+            headers: {
+              'X-RateLimit-Limit': RateLimits.analysis.maxRequests.toString(),
+              'X-RateLimit-Remaining': rateLimit.remaining.toString(),
+              'X-RateLimit-Reset': new Date(rateLimit.resetAt).toISOString(),
+            },
+          }
+        );
+      }
+    } catch (rateLimitError: any) {
+      // If rate limiting fails (e.g., Redis unavailable), log but continue
+      console.warn('[WARN] Rate limiting check failed, continuing without rate limit:', rateLimitError.message);
+      rateLimit = { allowed: true, remaining: RateLimits.analysis.maxRequests, resetAt: Date.now() + 60000 };
     }
 
-    const body: AnalysisRequest = await request.json();
+    // Parse request body with error handling
+    let body: AnalysisRequest;
+    try {
+      body = await request.json();
+    } catch (jsonError: any) {
+      console.error('[ERROR] Failed to parse request body:', jsonError);
+      return NextResponse.json(
+        { 
+          success: false,
+          error: 'Invalid JSON in request body',
+          details: jsonError.message 
+        },
+        { status: 400 }
+      );
+    }
 
     if (!body.instrument) {
       return NextResponse.json(
@@ -158,14 +179,24 @@ export async function POST(request: NextRequest) {
     
     if (supabase) {
       try {
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/analysis/route.ts:160',message:'Before instrument lookup in DB',data:{instrument:body.instrument,instrumentUpper:body.instrument.toUpperCase()},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
         // Get or create instrument
         let { data: instrumentData } = await supabase
           .from('instruments')
           .select('id')
           .eq('symbol', body.instrument.toUpperCase())
           .single();
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/analysis/route.ts:166',message:'After instrument lookup in DB',data:{instrument:body.instrument,found:!!instrumentData,instrumentId:instrumentData?.id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
 
         if (!instrumentData) {
+          // #region agent log
+          fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/analysis/route.ts:168',message:'Creating new instrument in DB',data:{instrument:body.instrument,instrumentUpper:body.instrument.toUpperCase()},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+          // #endregion
           const { data: newInstrument } = await supabase
             .from('instruments')
             .insert({
@@ -176,6 +207,9 @@ export async function POST(request: NextRequest) {
             .single();
 
           instrumentData = newInstrument;
+          // #region agent log
+          fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/api/analysis/route.ts:178',message:'New instrument created in DB',data:{instrument:body.instrument,newInstrumentId:newInstrument?.id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+          // #endregion
         }
 
         instrumentId = instrumentData?.id || null;
@@ -253,11 +287,45 @@ export async function POST(request: NextRequest) {
       // #endregion
 
       if (missingTimeframes.length > 0) {
+        // Check if this might be a symbol format issue
+        const symbolIssue = body.instrument && !body.instrument.startsWith('frx') && 
+                           !body.instrument.startsWith('R_') && 
+                           !body.instrument.startsWith('CRY') &&
+                           !body.instrument.startsWith('OTC_');
+        
+        // Check environment variables
+        const missingEnvVars: string[] = [];
+        if (!process.env.DERIV_WS_URL) missingEnvVars.push('DERIV_WS_URL');
+        if (!process.env.DERIV_APP_ID) missingEnvVars.push('DERIV_APP_ID');
+        if (!process.env.DERIV_API_KEY) missingEnvVars.push('DERIV_API_KEY');
+        
+        let errorMessage = `No data available for timeframe(s): ${missingTimeframes.join(', ')}.`;
+        
+        if (missingEnvVars.length > 0) {
+          errorMessage += ` Missing environment variables: ${missingEnvVars.join(', ')}. Please configure these in your .env.local file.`;
+        } else if (symbolIssue) {
+          errorMessage += ` The symbol "${body.instrument}" may need to be formatted differently (e.g., forex pairs may need "frx" prefix).`;
+        } else {
+          errorMessage += ` This could be due to: API connection issues, symbol not available, or network problems. Please check the symbol format and try again.`;
+        }
+        
+        console.error(`[ERROR] Missing timeframes for ${body.instrument}:`, missingTimeframes);
+        console.error(`[ERROR] Data received:`, {
+          '2h': data['2h']?.length || 0,
+          '15m': data['15m']?.length || 0,
+          '5m': data['5m']?.length || 0,
+        });
+        if (missingEnvVars.length > 0) {
+          console.error(`[ERROR] Missing environment variables:`, missingEnvVars);
+        }
+        
         return NextResponse.json(
           {
             success: false,
-            error: `No data available for timeframe(s): ${missingTimeframes.join(', ')}. Please try again later.`,
+            error: errorMessage,
             missingTimeframes,
+            symbol: body.instrument,
+            missingEnvVars: missingEnvVars.length > 0 ? missingEnvVars : undefined,
           },
           { status: 400 }
         );
@@ -319,8 +387,13 @@ export async function POST(request: NextRequest) {
 
       // Store in Redis cache (1 hour TTL for temp IDs, 24 hours for real IDs)
       if (runId) {
-        const cacheTTL = runId.startsWith('temp-') ? 3600 : 86400; // 1 hour or 24 hours
-        await redisCache.set(CacheKeys.analysis(runId), result, cacheTTL);
+        try {
+          const cacheTTL = runId.startsWith('temp-') ? 3600 : 86400; // 1 hour or 24 hours
+          await redisCache.set(CacheKeys.analysis(runId), result, cacheTTL);
+        } catch (cacheError: any) {
+          // Log but don't fail if Redis caching fails
+          console.warn('[WARN] Failed to cache analysis result in Redis:', cacheError.message);
+        }
       }
 
       return NextResponse.json({
@@ -328,13 +401,21 @@ export async function POST(request: NextRequest) {
         analysis_run_id: runId,
         result,
       }, {
-        headers: {
+        headers: rateLimit ? {
           'X-RateLimit-Limit': RateLimits.analysis.maxRequests.toString(),
           'X-RateLimit-Remaining': rateLimit.remaining.toString(),
           'X-RateLimit-Reset': new Date(rateLimit.resetAt).toISOString(),
-        },
+        } : undefined,
       });
     } catch (error: any) {
+      // Log detailed error information
+      console.error('[ERROR] Analysis execution failed:', {
+        message: error.message,
+        stack: error.stack,
+        name: error.name,
+        instrument: body?.instrument,
+        runId,
+      });
       
       // Update status to failed (skip if Supabase not available)
       if (supabase && runId && !runId.startsWith('temp-')) {
@@ -345,6 +426,7 @@ export async function POST(request: NextRequest) {
             .eq('id', runId);
         } catch (dbError) {
           // Ignore DB errors during error handling
+          console.warn('[WARN] Failed to update analysis run status:', dbError);
         }
       }
 
@@ -353,13 +435,19 @@ export async function POST(request: NextRequest) {
         { 
           success: false,
           error: error.message || 'Failed to run analysis',
+          errorType: error.name || 'UnknownError',
           stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
         },
         { status: 500 }
       );
     }
   } catch (error: any) {
-    console.error('Error running analysis:', error);
+    // Outer catch for any unhandled errors (e.g., in rate limiting, JSON parsing, etc.)
+    console.error('[ERROR] Unhandled error in analysis route:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+    });
     
     // Ensure we always return valid JSON
     try {
@@ -367,12 +455,14 @@ export async function POST(request: NextRequest) {
         { 
           success: false,
           error: error.message || 'Failed to run analysis',
+          errorType: error.name || 'UnknownError',
           stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
         },
         { status: 500 }
       );
     } catch (jsonError) {
       // Last resort: return plain text if JSON fails
+      console.error('[ERROR] Failed to create JSON error response:', jsonError);
       return new NextResponse(
         `Error: ${error.message || 'Failed to run analysis'}`,
         { status: 500, headers: { 'Content-Type': 'text/plain' } }

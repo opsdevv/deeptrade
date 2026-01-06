@@ -163,7 +163,8 @@ export async function POST(request: NextRequest) {
                 proposal.proposal.ask_price
               );
 
-              // Update trade with contract info
+              // Update trade with contract info and mark as automatically executed
+              const existingSetupData = trade.setup_data || {};
               const { data: updatedTrade, error: updateError } = await supabase
                 .from('trades')
                 .update({
@@ -175,6 +176,12 @@ export async function POST(request: NextRequest) {
                   contract_amount: trade.lot_size,
                   contract_duration: 5 * 60, // 5 minutes in seconds
                   contract_purchase_time: new Date().toISOString(),
+                  setup_data: {
+                    ...existingSetupData,
+                    executed_via_monitor: true,
+                    executed_at: new Date().toISOString(),
+                    execution_method: 'monitor',
+                  },
                 })
                 .eq('id', trade.id)
                 .select()
@@ -252,6 +259,102 @@ export async function POST(request: NextRequest) {
             } else {
               pnl = (trade.entry_price - currentPrice) * trade.lot_size * trade.number_of_positions;
               pnlPercentage = ((trade.entry_price - currentPrice) / trade.entry_price) * 100;
+            }
+
+            // Calculate progress to target
+            let progressToTarget = 0;
+            if (trade.target_price) {
+              if (trade.direction === 'long') {
+                const totalDistance = trade.target_price - trade.entry_price;
+                const currentDistance = currentPrice - trade.entry_price;
+                progressToTarget = totalDistance > 0 ? (currentDistance / totalDistance) * 100 : 0;
+              } else {
+                const totalDistance = trade.entry_price - trade.target_price;
+                const currentDistance = trade.entry_price - currentPrice;
+                progressToTarget = totalDistance > 0 ? (currentDistance / totalDistance) * 100 : 0;
+              }
+            }
+
+            // Check if we've hit 50% of target
+            const setupData = trade.setup_data || {};
+            const hasClosed50Percent = setupData.has_closed_50_percent || false;
+            const hasMovedSLToBE = setupData.has_moved_sl_to_be || false;
+            
+            if (progressToTarget >= 50) {
+              // Move SL to breakeven if not already done
+              if (!hasMovedSLToBE && trade.stop_loss !== trade.entry_price) {
+                await supabase
+                  .from('trades')
+                  .update({
+                    stop_loss: trade.entry_price,
+                    setup_data: {
+                      ...setupData,
+                      has_moved_sl_to_be: true,
+                      sl_moved_to_be_at: new Date().toISOString(),
+                      sl_moved_to_be_price: currentPrice,
+                    },
+                  })
+                  .eq('id', trade.id);
+
+                await supabase.from('trade_logs').insert({
+                  trade_id: trade.id,
+                  user_id: trade.user_id,
+                  log_type: 'info',
+                  message: `Stop loss moved to breakeven at 50% TP.`,
+                  data: {
+                    stop_loss_moved_to: trade.entry_price,
+                    price_at_move: currentPrice,
+                  },
+                });
+
+                trade.stop_loss = trade.entry_price;
+              }
+
+              // Close 50% of positions if multiple positions and not already done
+              if (!hasClosed50Percent && trade.number_of_positions > 1) {
+                const positionsToClose = Math.ceil(trade.number_of_positions * 0.5);
+                const remainingPositions = trade.number_of_positions - positionsToClose;
+                
+                // Calculate PNL for closed portion
+                let closedPnl = 0;
+                if (trade.direction === 'long') {
+                  closedPnl = (currentPrice - trade.entry_price) * trade.lot_size * positionsToClose;
+                } else {
+                  closedPnl = (trade.entry_price - currentPrice) * trade.lot_size * positionsToClose;
+                }
+
+                // Update trade: reduce positions
+                await supabase
+                  .from('trades')
+                  .update({
+                    number_of_positions: remainingPositions,
+                    setup_data: {
+                      ...setupData,
+                      has_closed_50_percent: true,
+                      closed_50_percent_at: new Date().toISOString(),
+                      closed_50_percent_price: currentPrice,
+                      closed_50_percent_pnl: closedPnl,
+                      has_moved_sl_to_be: true,
+                    },
+                  })
+                  .eq('id', trade.id);
+
+                // Log the partial close
+                await supabase.from('trade_logs').insert({
+                  trade_id: trade.id,
+                  user_id: trade.user_id,
+                  log_type: 'info',
+                  message: `Closed 50% of positions (${positionsToClose}/${trade.number_of_positions}) at 50% TP.`,
+                  data: {
+                    positions_closed: positionsToClose,
+                    remaining_positions: remainingPositions,
+                    close_price: currentPrice,
+                    pnl: closedPnl,
+                  },
+                });
+
+                trade.number_of_positions = remainingPositions;
+              }
             }
 
             // Check stop loss and target
@@ -366,7 +469,7 @@ export async function POST(request: NextRequest) {
               // Create cooldown if loss
               if (pnl < 0) {
                 const endsAt = new Date();
-                endsAt.setMinutes(endsAt.getMinutes() + 13);
+                endsAt.setMinutes(endsAt.getMinutes() + 14); // 14 minutes cooldown after loss
 
                 await supabase.from('cooldown_periods').insert({
                   user_id: trade.user_id,
@@ -378,7 +481,7 @@ export async function POST(request: NextRequest) {
                 });
               } else if (pnl > 0) {
                 const endsAt = new Date();
-                endsAt.setMinutes(endsAt.getMinutes() + 10);
+                endsAt.setMinutes(endsAt.getMinutes() + 7); // 7 minutes cooldown after win
 
                 await supabase.from('cooldown_periods').insert({
                   user_id: trade.user_id,

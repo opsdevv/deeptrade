@@ -33,8 +33,8 @@ export function analyze(
     throw new Error('Missing timeframe data');
   }
 
-  // Enforce 48h window
-  validate48hWindow(data);
+  // Note: 48h window validation removed - allowing data to exceed 48 hours as needed
+  // validate48hWindow(data);
 
   const timestamp = Date.now();
   const now = new Date();

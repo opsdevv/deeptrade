@@ -38,30 +38,25 @@ export default function ScalpingSetupLedger({ setups, symbol, messageId }: Scalp
 
     setLoading(true);
     try {
-      const response = await fetch('/api/trades/create', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          setups,
-          symbol,
-          lot_size: parseFloat(lotSize),
-          number_of_positions: parseInt(numPositions),
-          message_id: messageId,
-        }),
-      });
+      // Store setup data in localStorage for smart-trade to pick up
+      // This allows smart-trade to create an autotrading session that skips analysis
+      const chatSetupData = {
+        setups,
+        symbol,
+        lot_size: parseFloat(lotSize),
+        number_of_positions: parseInt(numPositions),
+        message_id: messageId,
+        from_chat: true, // Flag to indicate this came from chat
+        timestamp: Date.now(),
+      };
+      
+      localStorage.setItem('chat-autotrading-setup', JSON.stringify(chatSetupData));
 
-      const data = await response.json();
-      if (data.success) {
-        // Navigate to Smart Trade page
-        router.push('/smart-trade');
-      } else {
-        alert(data.error || 'Failed to create trades');
-      }
+      // Navigate to Smart Trade page
+      router.push('/smart-trade');
     } catch (error: any) {
-      console.error('Error creating trades:', error);
-      alert('Error creating trades: ' + error.message);
+      console.error('Error preparing autotrading setup:', error);
+      alert('Error preparing autotrading setup: ' + error.message);
     } finally {
       setLoading(false);
     }

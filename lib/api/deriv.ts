@@ -12,6 +12,16 @@ function getDerivConfig() {
   if (!DERIV_WS_URL) {
     throw new Error('DERIV_WS_URL environment variable is required');
   }
+  
+  // Validate that DERIV_WS_URL is a proper WebSocket URL
+  if (!DERIV_WS_URL.startsWith('wss://') && !DERIV_WS_URL.startsWith('ws://')) {
+    throw new Error(
+      `DERIV_WS_URL must be a valid WebSocket URL starting with 'wss://' or 'ws://'. ` +
+      `Current value appears to be invalid: "${DERIV_WS_URL.substring(0, 50)}${DERIV_WS_URL.length > 50 ? '...' : ''}". ` +
+      `Expected format: wss://ws.binaryws.com/websockets/v3 or wss://ws.derivws.com/websockets/v3`
+    );
+  }
+  
   if (!DERIV_APP_ID) {
     throw new Error('DERIV_APP_ID environment variable is required');
   }
@@ -52,8 +62,12 @@ function timeframeToDeriv(timeframe: Timeframe): number {
  * - Stock indices: Keep as-is (e.g., US_100, FTSE_100)
  * - Cryptocurrencies: Keep as-is (e.g., BTCUSD)
  */
-function normalizeSymbol(symbol: string): string {
+export function normalizeSymbol(symbol: string): string {
   const upperSymbol = symbol.toUpperCase().trim();
+  
+  // #region agent log
+  fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv.ts:55',message:'normalizeSymbol entry',data:{originalSymbol:symbol,upperSymbol},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+  // #endregion
   
   // Map common variations to Deriv symbols (exact matches first)
   const symbolMap: Record<string, string> = {
@@ -72,11 +86,18 @@ function normalizeSymbol(symbol: string): string {
 
   // Check exact match first
   if (symbolMap[upperSymbol]) {
-    return symbolMap[upperSymbol];
+    const result = symbolMap[upperSymbol];
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv.ts:75',message:'normalizeSymbol mapped from symbolMap',data:{originalSymbol:symbol,normalizedSymbol:result},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+    return result;
   }
 
   // If already has frx prefix, return as-is
   if (upperSymbol.startsWith('FRX')) {
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv.ts:79',message:'normalizeSymbol already has FRX prefix',data:{originalSymbol:symbol,normalizedSymbol:upperSymbol},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     return upperSymbol;
   }
 
@@ -101,6 +122,9 @@ function normalizeSymbol(symbol: string): string {
   ];
   
   if (derivedPatterns.some(pattern => pattern.test(upperSymbol))) {
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv.ts:104',message:'normalizeSymbol matched derived pattern',data:{originalSymbol:symbol,normalizedSymbol:upperSymbol},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     return upperSymbol; // Keep derived indices as-is
   }
 
@@ -117,6 +141,9 @@ function normalizeSymbol(symbol: string): string {
       stockIndexPattern3.test(upperSymbol) ||
       stockIndexPattern4.test(upperSymbol) ||
       stockIndexPattern5.test(upperSymbol)) {
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv.ts:119',message:'normalizeSymbol matched stock index pattern',data:{originalSymbol:symbol,normalizedSymbol:upperSymbol},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     // Stock indices should be kept as-is (Deriv uses formats like US_100, NAS_100, OTC_NDX, etc.)
     return upperSymbol;
   }
@@ -125,9 +152,13 @@ function normalizeSymbol(symbol: string): string {
   // Commodities can be: XAUUSD, XAGUSD, XPDUSD, XPTUSD, WTICOUSD, BRENTUSD, NGASUSD
   const commodityPattern = /^(XAU|XAG|XPD|XPT|WTICO|BRENT|NGAS)/;
   if (commodityPattern.test(upperSymbol)) {
+    const result = `frx${upperSymbol}`;
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv.ts:130',message:'normalizeSymbol matched commodity pattern',data:{originalSymbol:symbol,normalizedSymbol:result},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     // If it already ends with USD or another currency, keep it, just add frx prefix
     // If it's just the commodity code, we'll add USD suffix (but usually it comes with USD)
-    return `frx${upperSymbol}`;
+    return result;
   }
 
   // Check if it's a forex pair (6 letters, typically like EURUSD, GBPJPY)
@@ -140,7 +171,11 @@ function normalizeSymbol(symbol: string): string {
     const hasCurrency = commonCurrencies.some(cc => upperSymbol.includes(cc));
     
     if (hasCurrency) {
-      return `frx${upperSymbol}`;
+      const result = `frx${upperSymbol}`;
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv.ts:143',message:'normalizeSymbol matched forex pattern',data:{originalSymbol:symbol,normalizedSymbol:result},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      return result;
     }
   }
 
@@ -160,6 +195,9 @@ function normalizeSymbol(symbol: string): string {
   }
 
   // Default: return as-is (will be handled by findCorrectSymbol if it fails)
+  // #region agent log
+  fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv.ts:163',message:'normalizeSymbol default return',data:{originalSymbol:symbol,normalizedSymbol:upperSymbol},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+  // #endregion
   return upperSymbol;
 }
 
@@ -168,11 +206,18 @@ function normalizeSymbol(symbol: string): string {
  * Tries multiple variations: original, with frx prefix, without frx prefix, etc.
  */
 async function findCorrectSymbol(searchSymbol: string): Promise<string | null> {
+  // #region agent log
+  fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv.ts:170',message:'findCorrectSymbol entry',data:{searchSymbol},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+  // #endregion
   try {
     const response = await sendRequest({
       active_symbols: 1,
       product_type: 'basic',
     }, 5000);
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv.ts:175',message:'findCorrectSymbol got active_symbols response',data:{searchSymbol,hasActiveSymbols:!!response.active_symbols,activeSymbolsCount:Array.isArray(response.active_symbols)?response.active_symbols.length:0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
     
     if (response.active_symbols && Array.isArray(response.active_symbols)) {
       const searchUpper = searchSymbol.toUpperCase().trim();
@@ -197,7 +242,11 @@ async function findCorrectSymbol(searchSymbol: string): Promise<string | null> {
           return symStr === variation || displayStr === variation;
         });
         if (exactMatch) {
-          return exactMatch.symbol || exactMatch.symbol_display;
+          const result = exactMatch.symbol || exactMatch.symbol_display;
+          // #region agent log
+          fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv.ts:199',message:'findCorrectSymbol found exact match',data:{searchSymbol,foundSymbol:result},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+          // #endregion
+          return result;
         }
         
         // Try case-insensitive partial match
@@ -210,7 +259,11 @@ async function findCorrectSymbol(searchSymbol: string): Promise<string | null> {
                  variation.includes(displayStr);
         });
         if (partialMatch) {
-          return partialMatch.symbol || partialMatch.symbol_display;
+          const result = partialMatch.symbol || partialMatch.symbol_display;
+          // #region agent log
+          fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv.ts:213',message:'findCorrectSymbol found partial match',data:{searchSymbol,foundSymbol:result},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+          // #endregion
+          return result;
         }
       }
       
@@ -222,14 +275,24 @@ async function findCorrectSymbol(searchSymbol: string): Promise<string | null> {
           return symStr === cleaned;
         });
         if (cleanedMatch) {
-          return cleanedMatch.symbol || cleanedMatch.symbol_display;
+          const result = cleanedMatch.symbol || cleanedMatch.symbol_display;
+          // #region agent log
+          fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv.ts:224',message:'findCorrectSymbol found cleaned match',data:{searchSymbol,foundSymbol:result},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+          // #endregion
+          return result;
         }
       }
     }
   } catch (error) {
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv.ts:229',message:'findCorrectSymbol error',data:{searchSymbol,error:error instanceof Error?error.message:String(error)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
     // Silently fail - we'll use the normalized symbol
     console.warn(`[WARN] findCorrectSymbol failed for ${searchSymbol}:`, error);
   }
+  // #region agent log
+  fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv.ts:233',message:'findCorrectSymbol returning null',data:{searchSymbol},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+  // #endregion
   return null;
 }
 
@@ -280,9 +343,24 @@ async function initializeConnection(): Promise<WebSocket> {
   connectionRetries++;
 
   return new Promise((resolve, reject) => {
-    const config = getDerivConfig();
+    let config;
+    try {
+      config = getDerivConfig();
+    } catch (configError: any) {
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv.ts:335',message:'getDerivConfig validation failed',data:{error:configError.message},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+      // #endregion
+      isConnecting = false;
+      reject(configError);
+      return;
+    }
+    
+    const wsUrl = `${config.DERIV_WS_URL}?app_id=${config.DERIV_APP_ID}`;
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/api/deriv.ts:343',message:'Before WebSocket connection',data:{wsUrl,hasWss:wsUrl.startsWith('wss://'),hasWs:wsUrl.startsWith('ws://')},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+    // #endregion
     console.log(`[INFO] Connecting to Deriv WebSocket (attempt ${connectionRetries}): ${config.DERIV_WS_URL}?app_id=${config.DERIV_APP_ID}`);
-    const ws = new WebSocket(`${config.DERIV_WS_URL}?app_id=${config.DERIV_APP_ID}`);
+    const ws = new WebSocket(wsUrl);
 
     const connectionTimeout = setTimeout(() => {
       if (!wsReady) {
@@ -693,7 +771,20 @@ export async function fetchMarketData(
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`[ERROR] Error fetching Deriv data for ${normalizedSymbol} (${timeframe}):`, errorMessage);
-    throw new Error(`Failed to fetch market data from Deriv API: ${errorMessage}`);
+    
+    // Provide more helpful error messages
+    let helpfulMessage = errorMessage;
+    if (errorMessage.includes('DERIV_WS_URL') || errorMessage.includes('DERIV_APP_ID') || errorMessage.includes('DERIV_API_KEY')) {
+      helpfulMessage = `Configuration error: ${errorMessage}. Please check your environment variables in .env.local`;
+    } else if (errorMessage.includes('connection') || errorMessage.includes('WebSocket')) {
+      helpfulMessage = `Connection error: ${errorMessage}. Check your network connection and API endpoint.`;
+    } else if (errorMessage.includes('timeout')) {
+      helpfulMessage = `Request timeout: ${errorMessage}. The API may be slow or unavailable.`;
+    } else if (errorMessage.includes('symbol') || errorMessage.includes('not available')) {
+      helpfulMessage = `Symbol error: ${errorMessage}. The symbol "${normalizedSymbol}" may not be available or may need different formatting.`;
+    }
+    
+    throw new Error(`Failed to fetch market data from Deriv API: ${helpfulMessage}`);
   }
 }
 
@@ -903,7 +994,86 @@ export interface DerivAccountInfo {
 }
 
 /**
- * Get list of accounts from Deriv API
+ * Get balance for a specific account
+ */
+async function getAccountBalance(authToken: string, accountId: string): Promise<{ balance: number; currency: string } | null> {
+  return new Promise((resolve) => {
+    const config = getDerivConfig();
+    const ws = new WebSocket(`${config.DERIV_WS_URL}?app_id=${config.DERIV_APP_ID}`);
+    let requestId = 1;
+    const authReqId = requestId++;
+    const switchReqId = requestId++;
+    const balanceReqId = requestId++;
+
+    const timeout = setTimeout(() => {
+      ws.close();
+      resolve(null);
+    }, 10000);
+
+    ws.on('open', () => {
+      ws.send(JSON.stringify({
+        authorize: authToken,
+        req_id: authReqId,
+      }));
+    });
+
+    let authorized = false;
+    let switched = false;
+
+    ws.on('message', (data: WebSocket.Data) => {
+      try {
+        const message = JSON.parse(data.toString());
+
+        if (message.req_id === authReqId) {
+          if (message.authorize) {
+            authorized = true;
+            // Switch to the account
+            ws.send(JSON.stringify({
+              account_switch: accountId,
+              req_id: switchReqId,
+            }));
+          }
+        } else if (message.req_id === switchReqId && authorized) {
+          if (!message.error) {
+            switched = true;
+            // Get balance
+            ws.send(JSON.stringify({
+              balance: 1,
+              req_id: balanceReqId,
+            }));
+          } else {
+            clearTimeout(timeout);
+            ws.close();
+            resolve(null);
+          }
+        } else if (message.req_id === balanceReqId && switched) {
+          clearTimeout(timeout);
+          ws.close();
+          if (message.balance) {
+            resolve({
+              balance: parseFloat(message.balance.balance || '0'),
+              currency: message.balance.currency || 'USD',
+            });
+          } else {
+            resolve(null);
+          }
+        }
+      } catch (error) {
+        clearTimeout(timeout);
+        ws.close();
+        resolve(null);
+      }
+    });
+
+    ws.on('error', () => {
+      clearTimeout(timeout);
+      resolve(null);
+    });
+  });
+}
+
+/**
+ * Get list of accounts from Deriv API with balances
  * Requires authentication token
  */
 export async function getAccountList(authToken: string): Promise<DerivAccountInfo[]> {
@@ -929,7 +1099,7 @@ export async function getAccountList(authToken: string): Promise<DerivAccountInf
         }));
       });
 
-      ws.on('message', (data: WebSocket.Data) => {
+      ws.on('message', async (data: WebSocket.Data) => {
         try {
           const message = JSON.parse(data.toString());
 
@@ -979,7 +1149,27 @@ export async function getAccountList(authToken: string): Promise<DerivAccountInf
               if (accountInfos.length === 0) {
                 reject(new Error('No valid accounts found in response'));
               } else {
-                resolve(accountInfos);
+                // Fetch balance for each account
+                const accountsWithBalances = await Promise.all(
+                  accountInfos.map(async (acc) => {
+                    // If balance is already available from account_list, use it
+                    if (acc.balance !== undefined) {
+                      return acc;
+                    }
+                    // Otherwise, fetch balance
+                    const balanceInfo = await getAccountBalance(authToken, acc.account_id);
+                    if (balanceInfo) {
+                      return {
+                        ...acc,
+                        balance: balanceInfo.balance,
+                        currency: balanceInfo.currency,
+                      };
+                    }
+                    return acc;
+                  })
+                );
+                
+                resolve(accountsWithBalances);
               }
             } else {
               reject(new Error('Unexpected response format: account_list not found'));
@@ -1000,6 +1190,137 @@ export async function getAccountList(authToken: string): Promise<DerivAccountInf
   } catch (error: any) {
     throw new Error(`Failed to get account list: ${error.message}`);
   }
+}
+
+/**
+ * Subscribe to real-time price ticks for a symbol
+ * Returns a function to unsubscribe
+ */
+export function subscribeToTicks(
+  symbol: string,
+  onTick: (tick: { price: number; bid?: number; ask?: number; timestamp: number }) => void
+): () => void {
+  const normalizedSymbol = normalizeSymbol(symbol);
+  const config = getDerivConfig();
+  const ws = new WebSocket(`${config.DERIV_WS_URL}?app_id=${config.DERIV_APP_ID}`);
+  
+  let requestId = 1;
+  const authReqId = requestId++;
+  const subscribeReqId = requestId++;
+  let subscribed = false;
+  let unsubscribeRequested = false;
+
+  const unsubscribe = () => {
+    unsubscribeRequested = true;
+    if (subscribed) {
+      try {
+        ws.send(JSON.stringify({
+          forget: subscribeReqId,
+          req_id: requestId++,
+        }));
+      } catch (e) {
+        // Ignore errors when unsubscribing
+      }
+    }
+    try {
+      ws.close();
+    } catch (e) {
+      // Ignore errors
+    }
+  };
+
+  ws.on('open', () => {
+    if (unsubscribeRequested) {
+      ws.close();
+      return;
+    }
+    
+    // Authorize if we have API key
+    if (config.DERIV_API_KEY) {
+      ws.send(JSON.stringify({
+        authorize: config.DERIV_API_KEY,
+        req_id: authReqId,
+      }));
+    } else {
+      // No auth, just subscribe
+      subscribed = true;
+      ws.send(JSON.stringify({
+        ticks: normalizedSymbol,
+        subscribe: 1,
+        req_id: subscribeReqId,
+      }));
+    }
+  });
+
+  ws.on('message', (data: WebSocket.Data) => {
+    try {
+      const message = JSON.parse(data.toString());
+
+      if (message.req_id === authReqId) {
+        if (message.authorize && !message.error) {
+          // Authorization successful, now subscribe
+          subscribed = true;
+          ws.send(JSON.stringify({
+            ticks: normalizedSymbol,
+            subscribe: 1,
+            req_id: subscribeReqId,
+          }));
+        } else if (message.error) {
+          console.error('Authorization failed for tick subscription:', message.error);
+          unsubscribe();
+        }
+      } else if (message.subscription?.id || message.tick || message.ticks) {
+        // Handle tick data
+        const tick = message.tick || (message.ticks && message.ticks[0]);
+        if (tick) {
+          const price = parseFloat(tick.quote || tick.price || tick.close || 0);
+          if (price > 0) {
+            onTick({
+              price,
+              bid: tick.bid ? parseFloat(tick.bid) : undefined,
+              ask: tick.ask ? parseFloat(tick.ask) : undefined,
+              timestamp: tick.epoch || tick.time || Date.now() / 1000,
+            });
+          }
+        }
+      } else if (message.req_id === subscribeReqId) {
+        if (message.error) {
+          console.error('Subscription error:', message.error);
+          unsubscribe();
+        }
+        // Subscription successful - ticks will come via subscription messages
+      }
+    } catch (error) {
+      console.error('Error parsing tick message:', error);
+    }
+  });
+
+  ws.on('error', (error) => {
+    console.error('WebSocket error in tick subscription:', error);
+    if (!unsubscribeRequested) {
+      // Try to reconnect after a delay
+      setTimeout(() => {
+        if (!unsubscribeRequested) {
+          unsubscribe();
+          subscribeToTicks(symbol, onTick);
+        }
+      }, 5000);
+    }
+  });
+
+  ws.on('close', () => {
+    subscribed = false;
+    if (!unsubscribeRequested) {
+      // Reconnect if not explicitly unsubscribed
+      setTimeout(() => {
+        if (!unsubscribeRequested) {
+          subscribeToTicks(symbol, onTick);
+        }
+      }, 5000);
+    }
+  });
+
+  return unsubscribe;
 }
 
 /**

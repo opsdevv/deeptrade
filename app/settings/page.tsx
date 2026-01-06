@@ -70,6 +70,34 @@ export default function SettingsPage() {
     }
   };
 
+  const refreshBalances = async () => {
+    try {
+      setLoading(true);
+      // Fetch fresh balances from Deriv API
+      const response = await fetch('/api/deriv/accounts');
+      const data = await response.json();
+      if (data.success && data.accounts) {
+        // Update balances in accounts
+        const updatedAccounts = accounts.map(account => {
+          const freshAccount = data.accounts.find((acc: any) => acc.account_id === account.account_id);
+          if (freshAccount && freshAccount.balance !== undefined) {
+            return { ...account, balance: freshAccount.balance, currency: freshAccount.currency || account.currency };
+          }
+          return account;
+        });
+        setAccounts(updatedAccounts);
+        setMessage({ type: 'success', text: 'Balances refreshed successfully' });
+      } else {
+        setMessage({ type: 'error', text: data.error || 'Failed to refresh balances' });
+      }
+    } catch (error: any) {
+      console.error('Error refreshing balances:', error);
+      setMessage({ type: 'error', text: error.message || 'Failed to refresh balances' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const loadMt5Accounts = async () => {
     try {
       setLoading(true);
@@ -440,7 +468,19 @@ export default function SettingsPage() {
 
         {/* Deriv Accounts */}
         <div className="bg-gray-800 rounded-lg p-6 mb-6">
-          <h2 className="text-xl font-semibold text-white mb-4">Deriv Accounts</h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold text-white">Deriv Accounts</h2>
+            {accounts.length > 0 && (
+              <button
+                onClick={refreshBalances}
+                disabled={loading}
+                className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm py-2 px-4 rounded-lg transition flex items-center gap-2"
+              >
+                <span>🔄</span>
+                Refresh Balances
+              </button>
+            )}
+          </div>
           
           {loading ? (
             <div className="text-center py-4">

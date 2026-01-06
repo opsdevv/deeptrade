@@ -2,7 +2,7 @@
 
 import { TimeframeData, Timeframe } from '@/types/analysis';
 import { fetchMarketData } from '@/lib/api/deriv';
-import { normalizeData, enforce48hWindow, validateData } from './processor';
+import { normalizeData, validateData } from './processor';
 import { redisCache, CacheKeys } from '@/lib/redis/client';
 
 /**
@@ -43,10 +43,12 @@ export async function fetchMarketDataForTimeframes(
       fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/data/fetcher.ts:26',message:'After normalization',data:{timeframe:tf,normalizedLength:normalized?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
       // #endregion
       
-      const validated = enforce48hWindow(normalized);
+      // Note: 48h window filtering removed - allowing data to exceed 48 hours as needed
+      // const validated = enforce48hWindow(normalized);
+      const validated = normalized; // Use all data without 48h filtering
       
       // #region agent log
-      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/data/fetcher.ts:30',message:'After 48h window',data:{timeframe:tf,validatedLength:validated?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/data/fetcher.ts:30',message:'After normalization (48h filter disabled)',data:{timeframe:tf,validatedLength:validated?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
       // #endregion
       
       const validation = validateData(validated);
@@ -67,11 +69,14 @@ export async function fetchMarketDataForTimeframes(
       
       return { timeframe: tf, data: validated };
     } catch (error) {
-      console.error(`Error fetching ${tf} data:`, error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`[ERROR] Error fetching ${tf} data for ${symbol}:`, errorMessage);
+      console.error(`[ERROR] Full error:`, error);
       // #region agent log
-      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/data/fetcher.ts:52',message:'Error caught in timeframe fetch',data:{timeframe:tf,error:error instanceof Error?error.message:String(error),errorStack:error instanceof Error?error.stack:undefined},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/data/fetcher.ts:52',message:'Error caught in timeframe fetch',data:{symbol,timeframe:tf,error:errorMessage,errorStack:error instanceof Error?error.stack:undefined},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
       // #endregion
-      return { timeframe: tf, data: [] };
+      // Return empty array but log the error for debugging
+      return { timeframe: tf, data: [], error: errorMessage };
     }
   });
 
@@ -81,12 +86,32 @@ export async function fetchMarketDataForTimeframes(
   fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/data/fetcher.ts:59',message:'All promises resolved',data:{resultsCount:results.length,results:results.map(r=>({timeframe:r.timeframe,dataLength:r.data.length}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
   // #endregion
 
-  results.forEach(({ timeframe, data }) => {
+  const errors: string[] = [];
+  results.forEach(({ timeframe, data, error }: any) => {
     result[timeframe] = data;
+    if (error && data.length === 0) {
+      errors.push(`${timeframe}: ${error}`);
+    }
   });
 
+  // Log if any timeframes failed
+  if (errors.length > 0) {
+    console.error(`[ERROR] Failed to fetch data for ${symbol}:`, errors.join('; '));
+    // Check for common issues
+    const allErrors = errors.join(' ').toLowerCase();
+    if (allErrors.includes('environment variable') || allErrors.includes('required')) {
+      console.error(`[ERROR] Missing environment variables. Please check: DERIV_WS_URL, DERIV_APP_ID, DERIV_API_KEY`);
+    }
+    if (allErrors.includes('connection') || allErrors.includes('websocket')) {
+      console.error(`[ERROR] WebSocket connection issue. Check network connectivity and API endpoint.`);
+    }
+    if (allErrors.includes('symbol') || allErrors.includes('not available')) {
+      console.error(`[ERROR] Symbol format issue. Tried: ${symbol}. Check if symbol is available on Deriv.`);
+    }
+  }
+
   // #region agent log
-  fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/data/fetcher.ts:65',message:'fetchMarketDataForTimeframes exit',data:{'2h_count':result['2h']?.length||0,'15m_count':result['15m']?.length||0,'5m_count':result['5m']?.length||0,resultKeys:Object.keys(result)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+  fetch('http://127.0.0.1:7244/ingest/9579e514-688e-48af-b237-1ebae4332d37',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'lib/data/fetcher.ts:65',message:'fetchMarketDataForTimeframes exit',data:{symbol,'2h_count':result['2h']?.length||0,'15m_count':result['15m']?.length||0,'5m_count':result['5m']?.length||0,resultKeys:Object.keys(result),errors:errors.length>0?errors:undefined},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
   // #endregion
 
   return result as Record<Timeframe, TimeframeData[]>;

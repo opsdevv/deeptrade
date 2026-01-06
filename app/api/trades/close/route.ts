@@ -145,7 +145,7 @@ export async function POST(request: NextRequest) {
     // Create cooldown period if there was a loss
     if (hasLoss && totalPnl < 0) {
       const endsAt = new Date();
-      endsAt.setMinutes(endsAt.getMinutes() + 13); // 13 minutes cooldown after loss
+      endsAt.setMinutes(endsAt.getMinutes() + 14); // 14 minutes cooldown after loss
 
       await supabase.from('cooldown_periods').insert({
         user_id: user.id,
@@ -160,7 +160,7 @@ export async function POST(request: NextRequest) {
       await supabase.from('trade_logs').insert({
         user_id: user.id,
         log_type: 'cooldown_started',
-        message: 'Cooldown period started: 13 minutes after loss',
+        message: 'Cooldown period started: 14 minutes after loss',
         data: {
           cooldown_type: 'loss',
           ends_at: endsAt.toISOString(),
@@ -168,7 +168,7 @@ export async function POST(request: NextRequest) {
       });
     } else if (hasWin && totalPnl > 0) {
       const endsAt = new Date();
-      endsAt.setMinutes(endsAt.getMinutes() + 10); // 10 minutes cooldown after win
+      endsAt.setMinutes(endsAt.getMinutes() + 7); // 7 minutes cooldown after win
 
       await supabase.from('cooldown_periods').insert({
         user_id: user.id,
@@ -183,7 +183,7 @@ export async function POST(request: NextRequest) {
       await supabase.from('trade_logs').insert({
         user_id: user.id,
         log_type: 'cooldown_started',
-        message: 'Cooldown period started: 10 minutes after win',
+        message: 'Cooldown period started: 7 minutes after win',
         data: {
           cooldown_type: 'win',
           ends_at: endsAt.toISOString(),

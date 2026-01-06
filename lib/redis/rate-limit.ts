@@ -24,19 +24,33 @@ export async function checkRateLimit(
   endpoint: string,
   options: RateLimitOptions
 ): Promise<RateLimitResult> {
-  const { maxRequests, windowSeconds, identifier = 'global' } = options;
-  
-  const key = CacheKeys.rateLimit(identifier, endpoint);
-  const current = await redisCache.increment(key, windowSeconds);
-  
-  const remaining = Math.max(0, maxRequests - current);
-  const resetAt = Date.now() + (windowSeconds * 1000);
-  
-  return {
-    allowed: current <= maxRequests,
-    remaining,
-    resetAt,
-  };
+  try {
+    const { maxRequests, windowSeconds, identifier = 'global' } = options;
+    
+    const key = CacheKeys.rateLimit(identifier, endpoint);
+    const current = await redisCache.increment(key, windowSeconds);
+    
+    // If Redis is unavailable, increment returns 0, so we allow the request
+    // This provides graceful degradation
+    const remaining = Math.max(0, maxRequests - current);
+    const resetAt = Date.now() + (windowSeconds * 1000);
+    
+    return {
+      allowed: current <= maxRequests,
+      remaining,
+      resetAt,
+    };
+  } catch (error: any) {
+    // If rate limiting fails (e.g., Redis connection error), allow the request
+    // This ensures the app continues to work even if Redis is down
+    console.warn(`[WARN] Rate limit check failed for ${endpoint}:`, error.message);
+    const { maxRequests, windowSeconds } = options;
+    return {
+      allowed: true,
+      remaining: maxRequests,
+      resetAt: Date.now() + (windowSeconds * 1000),
+    };
+  }
 }
 
 /**
